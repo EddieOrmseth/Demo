@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeometryView.js</title>
+  <script>
+    // Emscripten pthreads require SharedArrayBuffer, which browsers only expose
+    // when the page is cross-origin isolated (COOP + COEP headers). This inline
+    // service worker intercepts every fetch response and injects those headers,
+    // then reloads once so the page starts isolated without needing server config.
+    (() => {
+      if (self.crossOriginIsolated) return;
+      const WORKER_SRC = `
+        self.addEventListener('install', () => self.skipWaiting());
+        self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+        self.addEventListener('fetch', e => {
+          e.respondWith(fetch(e.request).then(r => {
+            const h = new Headers(r.headers);
+            h.set('Cross-Origin-Opener-Policy', 'same-origin');
+            h.set('Cross-Origin-Embedder-Policy', 'require-corp');
+            return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
+          }));
+        });
+      `;
+      const blob = new Blob([WORKER_SRC], { type: 'text/javascript' });
+      const url  = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(url).then(() => location.reload());
+    })();
+  </script>
+  <style>
+    body { margin: 0; background: #1e1e1e; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <script>
+    // Don't override Module.print/printErr: with --emrun, emscripten installs its
+    // own hook that logs to the browser console AND posts to the emrun terminal.
+    var Module = {
+      canvas: document.getElementById('canvas'),
+    };
+  </script>
+  <script src="GeometryView.js"></script>
+</body>
+</html>

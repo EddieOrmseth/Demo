@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PhysicsSim.js</title>
+  <script>
+    // Emscripten pthreads require SharedArrayBuffer, which browsers only expose
+    // when the page is cross-origin isolated (COOP + COEP headers). This inline
+    // service worker intercepts every fetch response and injects those headers,
+    // then reloads once so the page starts isolated without needing server config.
+    (() => {
+      if (self.crossOriginIsolated) return;
+      const WORKER_SRC = `
+        self.addEventListener('install', () => self.skipWaiting());
+        self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+        self.addEventListener('fetch', e => {
+          e.respondWith(fetch(e.request).then(r => {
+            const h = new Headers(r.headers);
+            h.set('Cross-Origin-Opener-Policy', 'same-origin');
+            h.set('Cross-Origin-Embedder-Policy', 'require-corp');
+            return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
+          }));
+        });
+      `;
+      const blob = new Blob([WORKER_SRC], { type: 'text/javascript' });
+      const url  = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(url).then(() => location.reload());
+    })();
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
+    #layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+    }
+    #control-canvas {
+      display: block;
+      width: 25%;
+      height: 100%;
+      flex-shrink: 0;
+    }
+    #physics-canvas {
+      display: block;
+      flex: 1;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="layout">
+    <canvas id="control-canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <canvas id="physics-canvas"  tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  </div>
+  <script>
+    // contrib.glfw3's global init (_emglfw3w_init) runs before SetNextWindowCanvasSelector
+    // takes effect and falls back to Module.canvas. ControlWindow is created first so
+    // point the default canvas there; per-window selectors handle the rest.
+    var Module = {
+      canvas: document.getElementById('control-canvas'),
+    };
+  </script>
+  <script src="PhysicsSim.js"></script>
+</body>
+</html>
