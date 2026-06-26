@@ -9444,8 +9444,8 @@ function checkIncomingModuleAPI() {
 }
 
 var ASM_CONSTS = {
-  1084952632: () => window.innerWidth,
-  1084952658: () => window.innerHeight
+  1084952632: () => document.getElementById("canvas").clientWidth,
+  1084952686: () => document.getElementById("canvas").clientHeight
 };
 
 function ImGui_ImplGlfw_EmscriptenOpenURL(url) {
