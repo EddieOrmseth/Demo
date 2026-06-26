@@ -85,27 +85,6 @@ if (ENVIRONMENT_IS_NODE) {
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
-// include: /home/eddie/programming/emsdk/upstream/emscripten/src/emrun_prejs.js
-/**
- * @license
- * Copyright 2013 The Emscripten Authors
- * SPDX-License-Identifier: MIT
- *
- * This file gets implicitly injected as a `--pre-js` file when
- * emcc is run with `--emrun`
- */ // Route URL GET parameters to argc+argv
-if (globalThis.window) {
-  Module["arguments"] = window.location.search.slice(1).trim().split("&");
-  for (let i = 0; i < Module["arguments"].length; ++i) {
-    Module["arguments"][i] = decodeURI(Module["arguments"][i]);
-  }
-  // If no args were passed arguments = [''], in which case kill the single empty string.
-  if (!Module["arguments"][0]) {
-    Module["arguments"] = [];
-  }
-}
-
-// end include: /home/eddie/programming/emsdk/upstream/emscripten/src/emrun_prejs.js
 var arguments_ = [];
 
 var thisProgram = "./this.program";
@@ -507,7 +486,7 @@ function unexportedRuntimeSymbol(sym) {
  */ function initWorkerLogging() {
   function getLogPrefix() {
     var t = 0;
-    if (runtimeInitialized && typeof _pthread_self != "undefined" && !runtimeExited) {
+    if (runtimeInitialized && typeof _pthread_self != "undefined") {
       t = _pthread_self();
     }
     return `w:${workerID},t:${ptrToString(t)}:`;
@@ -676,8 +655,6 @@ if (ENVIRONMENT_IS_PTHREAD) {
 // Memory management
 var runtimeInitialized = false;
 
-var runtimeExited = false;
-
 function updateMemoryViews() {
   var b = wasmMemory.buffer;
   HEAP8 = new Int8Array(b);
@@ -757,24 +734,6 @@ function preMain() {
   checkStackCookie();
 }
 
-function exitRuntime() {
-  assert(!runtimeExited);
-  checkStackCookie();
-  if ((ENVIRONMENT_IS_PTHREAD)) {
-    return;
-  }
-  // PThreads reuse the runtime from the main thread.
-  ___funcs_on_exit();
-  // Native atexit() functions
-  // Begin ATEXITS hooks
-  callRuntimeCallbacks(onExits);
-  FS.quit();
-  TTY.shutdown();
-  // End ATEXITS hooks
-  PThread.terminateRuntime();
-  runtimeExited = true;
-}
-
 function postRun() {
   checkStackCookie();
   if ((ENVIRONMENT_IS_PTHREAD)) {
@@ -823,7 +782,6 @@ function postRun() {
 function createExportWrapper(name, nargs) {
   return (...args) => {
     assert(runtimeInitialized, `native function \`${name}\` called before runtime initialization`);
-    assert(!runtimeExited, `native function \`${name}\` called after runtime exit (use NO_EXIT_RUNTIME to keep it alive after main() exits)`);
     var f = wasmExports[name];
     assert(f, `exported native function \`${name}\` not found`);
     // Only assert for too many arguments. Too few can be valid since the missing arguments will be zero filled.
@@ -1185,6 +1143,7 @@ function exitOnMainThread(returnCode) {
 
 /** @param {boolean|number=} implicit */ var exitJS = (status, implicit) => {
   EXITSTATUS = status;
+  checkUnflushedContent();
   if (ENVIRONMENT_IS_PTHREAD) {
     // implicit exit can never happen on a pthread
     assert(!implicit);
@@ -1194,9 +1153,6 @@ function exitOnMainThread(returnCode) {
     // because it runs a main loop, but that doesn't affect the main thread.
     exitOnMainThread(status);
     throw "unwind";
-  }
-  if (!keepRuntimeAlive()) {
-    exitRuntime();
   }
   // if exit() was called explicitly, warn the user if the runtime isn't actually being shut down
   if (keepRuntimeAlive() && !implicit) {
@@ -1430,10 +1386,6 @@ var PThread = {
   }
 };
 
-var onExits = [];
-
-var addOnExit = cb => onExits.push(cb);
-
 var onPostRuns = [];
 
 var addOnPostRun = cb => onPostRuns.push(cb);
@@ -1537,7 +1489,7 @@ var invokeEntryPoint = (ptr, arg) => {
   finish(result);
 };
 
-var noExitRuntime = false;
+var noExitRuntime = true;
 
 var registerTLSInit = tlsInitFunc => PThread.tlsInitFunctions.push(tlsInitFunc);
 
@@ -4663,9 +4615,6 @@ var handleException = e => {
 };
 
 var maybeExit = () => {
-  if (runtimeExited) {
-    return;
-  }
   if (!keepRuntimeAlive()) {
     try {
       if (ENVIRONMENT_IS_PTHREAD) {
@@ -4683,7 +4632,7 @@ var maybeExit = () => {
 };
 
 var callUserCallback = func => {
-  if (runtimeExited || ABORT) {
+  if (ABORT) {
     err("user callback triggered after runtime exited or application aborted.  Ignoring.");
     return;
   }
@@ -5920,18 +5869,16 @@ function _emscripten_err(str) {
   return err(UTF8ToString(str));
 }
 
+var onExits = [];
+
+var addOnExit = cb => onExits.push(cb);
+
 var JSEvents = {
   removeAllEventListeners() {
     while (JSEvents.eventHandlers.length) {
       JSEvents._removeHandler(JSEvents.eventHandlers.length - 1);
     }
     JSEvents.deferredCalls = [];
-  },
-  registerRemoveEventListeners() {
-    if (!JSEvents.removeEventListenersRegistered) {
-      addOnExit(JSEvents.removeAllEventListeners);
-      JSEvents.removeEventListenersRegistered = true;
-    }
   },
   inEventHandler: 0,
   deferredCalls: [],
@@ -6015,7 +5962,6 @@ var JSEvents = {
       };
       eventHandler.target.addEventListener(eventHandler.eventTypeString, eventHandler.eventListenerFunc, eventHandler.useCapture);
       JSEvents.eventHandlers.push(eventHandler);
-      JSEvents.registerRemoveEventListeners();
     } else {
       for (var i = 0; i < JSEvents.eventHandlers.length; ++i) {
         if (JSEvents.eventHandlers[i].target == eventHandler.target && JSEvents.eventHandlers[i].eventTypeString == eventHandler.eventTypeString) {
@@ -9478,8 +9424,6 @@ var _emscripten_builtin_memalign = makeInvalidEarlyAccess("_emscripten_builtin_m
 
 var __emscripten_run_callback_on_thread = makeInvalidEarlyAccess("__emscripten_run_callback_on_thread");
 
-var ___funcs_on_exit = makeInvalidEarlyAccess("___funcs_on_exit");
-
 var __emscripten_thread_init = makeInvalidEarlyAccess("__emscripten_thread_init");
 
 var ___set_thread_state = makeInvalidEarlyAccess("___set_thread_state");
@@ -9528,7 +9472,6 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports["pthread_self"] != "undefined", "missing Wasm export: pthread_self");
   assert(typeof wasmExports["emscripten_builtin_memalign"] != "undefined", "missing Wasm export: emscripten_builtin_memalign");
   assert(typeof wasmExports["_emscripten_run_callback_on_thread"] != "undefined", "missing Wasm export: _emscripten_run_callback_on_thread");
-  assert(typeof wasmExports["__funcs_on_exit"] != "undefined", "missing Wasm export: __funcs_on_exit");
   assert(typeof wasmExports["_emscripten_thread_init"] != "undefined", "missing Wasm export: _emscripten_thread_init");
   assert(typeof wasmExports["__set_thread_state"] != "undefined", "missing Wasm export: __set_thread_state");
   assert(typeof wasmExports["_emscripten_thread_crashed"] != "undefined", "missing Wasm export: _emscripten_thread_crashed");
@@ -9556,7 +9499,6 @@ function assignWasmExports(wasmExports) {
   _pthread_self = wasmExports["pthread_self"];
   _emscripten_builtin_memalign = createExportWrapper("emscripten_builtin_memalign", 2);
   __emscripten_run_callback_on_thread = createExportWrapper("_emscripten_run_callback_on_thread", 6);
-  ___funcs_on_exit = createExportWrapper("__funcs_on_exit", 0);
   __emscripten_thread_init = createExportWrapper("_emscripten_thread_init", 6);
   ___set_thread_state = createExportWrapper("__set_thread_state", 4);
   __emscripten_thread_crashed = createExportWrapper("_emscripten_thread_crashed", 0);
@@ -9968,6 +9910,46 @@ function run(args = arguments_) {
   checkStackCookie();
 }
 
+function checkUnflushedContent() {
+  // Compiler settings do not allow exiting the runtime, so flushing
+  // the streams is not possible. but in ASSERTIONS mode we check
+  // if there was something to flush, and if so tell the user they
+  // should request that the runtime be exitable.
+  // Normally we would not even include flush() at all, but in ASSERTIONS
+  // builds we do so just for this check, and here we see if there is any
+  // content to flush, that is, we check if there would have been
+  // something a non-ASSERTIONS build would have not seen.
+  // How we flush the streams depends on whether we are in SYSCALLS_REQUIRE_FILESYSTEM=0
+  // mode (which has its own special function for this; otherwise, all
+  // the code is inside libc)
+  var oldOut = out;
+  var oldErr = err;
+  var has = false;
+  out = err = x => {
+    has = true;
+  };
+  try {
+    // it doesn't matter if it fails
+    _fflush(0);
+    // also flush in the JS FS layer
+    for (var name of [ "stdout", "stderr" ]) {
+      var info = FS.analyzePath("/dev/" + name);
+      if (!info) return;
+      var stream = info.object;
+      var rdev = stream.rdev;
+      var tty = TTY.ttys[rdev];
+      if (tty?.output?.length) {
+        has = true;
+      }
+    }
+  } catch (e) {}
+  out = oldOut;
+  err = oldErr;
+  if (has) {
+    warnOnce("stdio streams had content in them that was not flushed. you should set EXIT_RUNTIME to 1 (see the Emscripten FAQ), or make sure to emit a newline when you printf etc.");
+  }
+}
+
 var wasmExports;
 
 if ((!(ENVIRONMENT_IS_PTHREAD))) {
@@ -9977,101 +9959,4 @@ if ((!(ENVIRONMENT_IS_PTHREAD))) {
   // instance is received.
   createWasm();
   run();
-}
-
-// end include: postamble.js
-// include: /home/eddie/programming/emsdk/upstream/emscripten/src/emrun_postjs.js
-/**
- * @license
- * Copyright 2013 The Emscripten Authors
- * SPDX-License-Identifier: MIT
- *
- * This file gets implicitly injected as a `--post-js` file when
- * emcc is run with `--emrun`
- */ // POSTs the given binary data represented as a (typed) array data back to the
-// emrun-based web server.
-// To use from C code, call e.g:
-//   EM_ASM({emrun_file_dump("file.dat", HEAPU8.subarray($0, $0 + $1));}, my_data_pointer, my_data_pointer_byte_length);
-// Note: this functions does nothing by default but gets redefined below
-// in `emrun_register_handlers` when emrun is active, along with `out` and
-// `err`.
-var emrun_file_dump = (filename, data) => {};
-
-if (globalThis.window && globalThis.document && (typeof ENVIRONMENT_IS_PTHREAD == "undefined" || !ENVIRONMENT_IS_PTHREAD)) {
-  var emrun_register_handlers = () => {
-    // When C code exit()s, we may still have remaining stdout and stderr
-    // messages in flight. In that case, we can't close the browser until all
-    // those XHRs have finished, so the following state variables track that all
-    // communication is done, after which we can close.
-    var emrun_num_post_messages_in_flight = 0;
-    var emrun_should_close_itself = false;
-    var postExit = msg => {
-      var http = new XMLHttpRequest;
-      // Don't do this immediately, this may race with the notification about
-      // the return code reaching the server. Send a *sync* xhr so that we know
-      // for sure that the server has gotten the return code before we continue.
-      http.open("POST", "stdio.html", false);
-      http.send(msg);
-      try {
-        // Try closing the current browser window, since it exit()ed itself.
-        // This can shut down the browser process and then emrun does not need
-        // to kill the whole browser process.
-        window.close();
-      } catch (e) {}
-    };
-    var post = (url, msg) => {
-      var http = new XMLHttpRequest;
-      ++emrun_num_post_messages_in_flight;
-      http.onreadystatechange = () => {
-        if (http.readyState == 4) {
-          if (--emrun_num_post_messages_in_flight == 0 && emrun_should_close_itself) {
-            postExit("^exit^" + EXITSTATUS);
-          }
-        }
-      };
-      http.open("POST", url, true);
-      http.send(msg);
-    };
-    // If the address contains localhost, or we are running the page from port
-    // 6931, we can assume we're running the test runner and should post stdout
-    // logs.
-    if (document.URL.search("localhost") != -1 || document.URL.search(":6931/") != -1) {
-      var emrun_http_sequence_number = 1;
-      var prevPrint = out;
-      var prevErr = err;
-      addOnExit(() => {
-        if (emrun_num_post_messages_in_flight == 0) {
-          postExit("^exit^" + EXITSTATUS);
-        } else {
-          emrun_should_close_itself = true;
-        }
-      });
-      out = text => {
-        post("stdio.html", "^out^" + (emrun_http_sequence_number++) + "^" + encodeURIComponent(text));
-        prevPrint(text);
-      };
-      err = text => {
-        post("stdio.html", "^err^" + (emrun_http_sequence_number++) + "^" + encodeURIComponent(text));
-        prevErr(text);
-      };
-      emrun_file_dump = (filename, data) => {
-        out(`Dumping out file "${filename}" with ${data.length} bytes of data.`);
-        if (ArrayBuffer.isView(data) && typeof SharedArrayBuffer !== "undefined" && data.buffer instanceof SharedArrayBuffer) {
-          data = new data.constructor(data);
-        }
-        post("stdio.html?file=" + filename, data);
-      };
-      // Notify emrun web server that this browser has successfully launched the
-      // page. Note that we may need to wait for the server to be ready.
-      var tryToSendPageload = () => {
-        try {
-          post("stdio.html", "^pageload^");
-        } catch (e) {
-          setTimeout(tryToSendPageload, 50);
-        }
-      };
-      tryToSendPageload();
-    }
-  };
-  emrun_register_handlers();
 }
