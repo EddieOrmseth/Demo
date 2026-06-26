@@ -1178,8 +1178,14 @@ function _proc_exit(code) {
   quit_(code, new ExitStatus(code));
 }
 
+var runtimeKeepalivePop = () => {
+  assert(runtimeKeepaliveCounter > 0);
+  runtimeKeepaliveCounter -= 1;
+};
+
 function exitOnMainThread(returnCode) {
   if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(1, 0, 0, returnCode);
+  runtimeKeepalivePop();
   _exit(returnCode);
 }
 
@@ -1290,6 +1296,13 @@ var PThread = {
     // Detach the worker from the pthread object, and return it to the
     // worker pool as an unused worker.
     worker.pthread_ptr = 0;
+    if (ENVIRONMENT_IS_NODE) {
+      // Once the proxied main thread has finished, mark it as weakly
+      // referenced so that its existence does not prevent Node.js from
+      // exiting.  This has no effect if the worker is already weakly
+      // referenced.
+      worker.unref();
+    }
     // Finally, free the underlying (and now-unused) pthread structure in
     // linear memory.
     __emscripten_thread_free_data(pthread_ptr);
@@ -1418,11 +1431,6 @@ var PThread = {
   getNewWorker() {
     if (PThread.unusedWorkers.length == 0) {
       // PTHREAD_POOL_SIZE_STRICT should show a warning and, if set to level `2`, return from the function.
-      // However, if we're in Node.js, then we can create new workers on the fly and PTHREAD_POOL_SIZE_STRICT
-      // should be ignored altogether.
-      if (!ENVIRONMENT_IS_NODE) {
-        err("Tried to spawn a new thread, but the thread pool is exhausted.\n" + "This might result in a deadlock unless some threads eventually exit or the code explicitly breaks out to the event loop.\n" + "If you want to increase the pool size, use setting `-sPTHREAD_POOL_SIZE=...`." + "\nIf you want to throw an explicit error instead of the risk of deadlocking in those cases, use setting `-sPTHREAD_POOL_SIZE_STRICT=2`.");
-      }
       PThread.allocateUnusedWorker();
       PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0]);
     }
@@ -1540,6 +1548,10 @@ var invokeEntryPoint = (ptr, arg) => {
 var noExitRuntime = false;
 
 var registerTLSInit = tlsInitFunc => PThread.tlsInitFunctions.push(tlsInitFunc);
+
+var runtimeKeepalivePush = () => {
+  runtimeKeepaliveCounter += 1;
+};
 
 /**
    * @param {number} ptr
@@ -6092,10 +6104,6 @@ function _emscripten_exit_pointerlock() {
   return 0;
 }
 
-var runtimeKeepalivePush = () => {
-  runtimeKeepaliveCounter += 1;
-};
-
 var _emscripten_exit_with_live_runtime = () => {
   runtimeKeepalivePush();
   throw "unwind";
@@ -8277,6 +8285,8 @@ function _emscripten_resize_heap(requestedSize) {
   return false;
 }
 
+var _emscripten_runtime_keepalive_check = keepRuntimeAlive;
+
 /** @suppress {checkTypes} */ function _emscripten_sample_gamepad_data() {
   if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(33, 0, 1);
   try {
@@ -8572,11 +8582,6 @@ var MainLoop = {
       MainLoop.fakeRequestAnimationFrame(func);
     }
   }
-};
-
-var runtimeKeepalivePop = () => {
-  assert(runtimeKeepaliveCounter > 0);
-  runtimeKeepaliveCounter -= 1;
 };
 
 /**
@@ -9476,6 +9481,12 @@ var _pthread_self = makeInvalidEarlyAccess("_pthread_self");
 
 var _emscripten_builtin_memalign = makeInvalidEarlyAccess("_emscripten_builtin_memalign");
 
+var __emscripten_proxy_main = Module["__emscripten_proxy_main"] = makeInvalidEarlyAccess("__emscripten_proxy_main");
+
+var _emscripten_stack_get_base = makeInvalidEarlyAccess("_emscripten_stack_get_base");
+
+var _emscripten_stack_get_end = makeInvalidEarlyAccess("_emscripten_stack_get_end");
+
 var __emscripten_run_callback_on_thread = makeInvalidEarlyAccess("__emscripten_run_callback_on_thread");
 
 var ___funcs_on_exit = makeInvalidEarlyAccess("___funcs_on_exit");
@@ -9485,10 +9496,6 @@ var __emscripten_thread_init = makeInvalidEarlyAccess("__emscripten_thread_init"
 var ___set_thread_state = makeInvalidEarlyAccess("___set_thread_state");
 
 var __emscripten_thread_crashed = makeInvalidEarlyAccess("__emscripten_thread_crashed");
-
-var _emscripten_stack_get_end = makeInvalidEarlyAccess("_emscripten_stack_get_end");
-
-var _emscripten_stack_get_base = makeInvalidEarlyAccess("_emscripten_stack_get_base");
 
 var __emscripten_run_js_on_main_thread_done = makeInvalidEarlyAccess("__emscripten_run_js_on_main_thread_done");
 
@@ -9527,13 +9534,14 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports["_emscripten_tls_init"] != "undefined", "missing Wasm export: _emscripten_tls_init");
   assert(typeof wasmExports["pthread_self"] != "undefined", "missing Wasm export: pthread_self");
   assert(typeof wasmExports["emscripten_builtin_memalign"] != "undefined", "missing Wasm export: emscripten_builtin_memalign");
+  assert(typeof wasmExports["_emscripten_proxy_main"] != "undefined", "missing Wasm export: _emscripten_proxy_main");
+  assert(typeof wasmExports["emscripten_stack_get_base"] != "undefined", "missing Wasm export: emscripten_stack_get_base");
+  assert(typeof wasmExports["emscripten_stack_get_end"] != "undefined", "missing Wasm export: emscripten_stack_get_end");
   assert(typeof wasmExports["_emscripten_run_callback_on_thread"] != "undefined", "missing Wasm export: _emscripten_run_callback_on_thread");
   assert(typeof wasmExports["__funcs_on_exit"] != "undefined", "missing Wasm export: __funcs_on_exit");
   assert(typeof wasmExports["_emscripten_thread_init"] != "undefined", "missing Wasm export: _emscripten_thread_init");
   assert(typeof wasmExports["__set_thread_state"] != "undefined", "missing Wasm export: __set_thread_state");
   assert(typeof wasmExports["_emscripten_thread_crashed"] != "undefined", "missing Wasm export: _emscripten_thread_crashed");
-  assert(typeof wasmExports["emscripten_stack_get_end"] != "undefined", "missing Wasm export: emscripten_stack_get_end");
-  assert(typeof wasmExports["emscripten_stack_get_base"] != "undefined", "missing Wasm export: emscripten_stack_get_base");
   assert(typeof wasmExports["_emscripten_run_js_on_main_thread_done"] != "undefined", "missing Wasm export: _emscripten_run_js_on_main_thread_done");
   assert(typeof wasmExports["_emscripten_run_js_on_main_thread"] != "undefined", "missing Wasm export: _emscripten_run_js_on_main_thread");
   assert(typeof wasmExports["_emscripten_thread_free_data"] != "undefined", "missing Wasm export: _emscripten_thread_free_data");
@@ -9555,13 +9563,14 @@ function assignWasmExports(wasmExports) {
   __emscripten_tls_init = createExportWrapper("_emscripten_tls_init", 0);
   _pthread_self = wasmExports["pthread_self"];
   _emscripten_builtin_memalign = createExportWrapper("emscripten_builtin_memalign", 2);
+  __emscripten_proxy_main = Module["__emscripten_proxy_main"] = createExportWrapper("_emscripten_proxy_main", 2);
+  _emscripten_stack_get_base = wasmExports["emscripten_stack_get_base"];
+  _emscripten_stack_get_end = wasmExports["emscripten_stack_get_end"];
   __emscripten_run_callback_on_thread = createExportWrapper("_emscripten_run_callback_on_thread", 6);
   ___funcs_on_exit = createExportWrapper("__funcs_on_exit", 0);
   __emscripten_thread_init = createExportWrapper("_emscripten_thread_init", 6);
   ___set_thread_state = createExportWrapper("__set_thread_state", 4);
   __emscripten_thread_crashed = createExportWrapper("_emscripten_thread_crashed", 0);
-  _emscripten_stack_get_end = wasmExports["emscripten_stack_get_end"];
-  _emscripten_stack_get_base = wasmExports["emscripten_stack_get_base"];
   __emscripten_run_js_on_main_thread_done = createExportWrapper("_emscripten_run_js_on_main_thread_done", 3);
   __emscripten_run_js_on_main_thread = createExportWrapper("_emscripten_run_js_on_main_thread", 5);
   __emscripten_thread_free_data = createExportWrapper("_emscripten_thread_free_data", 1);
@@ -9784,6 +9793,7 @@ function assignWasmImports() {
     /** @export */ emscripten_request_fullscreen: _emscripten_request_fullscreen,
     /** @export */ emscripten_request_pointerlock: _emscripten_request_pointerlock,
     /** @export */ emscripten_resize_heap: _emscripten_resize_heap,
+    /** @export */ emscripten_runtime_keepalive_check: _emscripten_runtime_keepalive_check,
     /** @export */ emscripten_sample_gamepad_data: _emscripten_sample_gamepad_data,
     /** @export */ emscripten_set_blur_callback_on_thread: _emscripten_set_blur_callback_on_thread,
     /** @export */ emscripten_set_focus_callback_on_thread: _emscripten_set_focus_callback_on_thread,
@@ -9880,8 +9890,8 @@ function applySignatureConversions(wasmExports) {
   wasmExports["strerror"] = makeWrapper_p_(wasmExports["strerror"]);
   wasmExports["pthread_self"] = makeWrapper_p(wasmExports["pthread_self"]);
   wasmExports["emscripten_builtin_memalign"] = makeWrapper_ppp(wasmExports["emscripten_builtin_memalign"]);
-  wasmExports["emscripten_stack_get_end"] = makeWrapper_p(wasmExports["emscripten_stack_get_end"]);
   wasmExports["emscripten_stack_get_base"] = makeWrapper_p(wasmExports["emscripten_stack_get_base"]);
+  wasmExports["emscripten_stack_get_end"] = makeWrapper_p(wasmExports["emscripten_stack_get_end"]);
   wasmExports["_emscripten_stack_alloc"] = makeWrapper_pp(wasmExports["_emscripten_stack_alloc"]);
   wasmExports["emscripten_stack_get_current"] = makeWrapper_p(wasmExports["emscripten_stack_get_current"]);
   return wasmExports;
@@ -9894,7 +9904,10 @@ var calledRun;
 function callMain(args = []) {
   assert(runDependencies == 0, 'cannot call main when async dependencies remain! (listen on Module["onRuntimeInitialized"])');
   assert(typeof onPreRuns === "undefined" || onPreRuns.length == 0, "cannot call main when preRun functions remain to be called");
-  var entryFunction = _main;
+  var entryFunction = __emscripten_proxy_main;
+  // With PROXY_TO_PTHREAD make sure we keep the runtime alive until the
+  // proxied main calls exit (see exitOnMainThread() for where Pop is called).
+  runtimeKeepalivePush();
   args.unshift(thisProgram);
   var argc = args.length;
   var argv = stackAlloc((argc + 1) * 4);
