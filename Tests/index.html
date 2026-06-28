@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>GeometryView.js</title>
+  <title>Tests.js</title>
   <script>
     // Emscripten pthreads require SharedArrayBuffer, which browsers only expose
     // when the page is cross-origin isolated (COOP + COEP headers). This inline
@@ -28,19 +28,56 @@
     })();
   </script>
   <style>
-    body { margin: 0; background: #1e1e1e; }
-    canvas { display: block; }
+    body { 
+      margin: 0; 
+      background: #1e1e1e; 
+      height: 100vh;
+      display: flex;
+    }
+    #output {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 10px;
+      border: none;
+      background-color: #1e1e1e;
+      color: #d4d4d4;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      box-sizing: border-box;
+      resize: none;
+      outline: none;
+    }
   </style>
 </head>
 <body>
-  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <textarea id="output" readonly></textarea>
+  
   <script>
-    // Don't override Module.print/printErr: with --emrun, emscripten installs its
-    // own hook that logs to the browser console AND posts to the emrun terminal.
+    const outputElement = document.getElementById('output');
+
     var Module = {
-      canvas: document.getElementById('canvas'),
+      print: (function() {
+        return function(text) {
+          if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+          if (outputElement) {
+            outputElement.value += text + "\n";
+            outputElement.scrollTop = outputElement.scrollHeight; // Auto-scrolls to the bottom
+          }
+          // Keeps console logging intact for debugging/emrun
+          console.log(text); 
+        };
+      })(),
+      printErr: function(text) {
+        if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+        if (outputElement) {
+          outputElement.value += text + "\n";
+          outputElement.scrollTop = outputElement.scrollHeight;
+        }
+        console.error(text);
+      }
     };
   </script>
-  <script src="GeometryView.js"></script>
+  <script src="Tests.js"></script>
 </body>
 </html>
