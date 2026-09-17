@@ -9300,7 +9300,7 @@ var WEBRTC = {
   allocUTF8FromString: function(str) {
     var strLen = lengthBytesUTF8(str);
     var strOnHeap = _malloc(strLen + 1);
-    stringToUTF8(str, strOnHeap, strLen + 1);
+    stringToUTF8(str, strOnHeap >>> 0, strLen + 1);
     return strOnHeap;
   },
   registerPeerConnection: function(peerConnection) {
@@ -9463,11 +9463,11 @@ function _rtcCreatePeerConnection(pUrls, pUsernames, pPasswords, nIceServers) {
   var iceServers = [];
   for (var i = 0; i < nIceServers; ++i) {
     var heap = (growMemViews(), HEAPU32);
-    var pUrl = heap[pUrls / heap.BYTES_PER_ELEMENT + i >>> 0];
+    var pUrl = heap[(pUrls >>> 0) / heap.BYTES_PER_ELEMENT + i >>> 0];
     var url = UTF8ToString(pUrl);
-    var pUsername = heap[pUsernames / heap.BYTES_PER_ELEMENT + i >>> 0];
+    var pUsername = heap[(pUsernames >>> 0) / heap.BYTES_PER_ELEMENT + i >>> 0];
     var username = UTF8ToString(pUsername);
-    var pPassword = heap[pPasswords / heap.BYTES_PER_ELEMENT + i >>> 0];
+    var pPassword = heap[(pPasswords >>> 0) / heap.BYTES_PER_ELEMENT + i >>> 0];
     var password = UTF8ToString(pPassword);
     if (username == "") {
       iceServers.push({
@@ -9513,7 +9513,7 @@ function _rtcGetBufferedAmount(dc) {
 function _rtcGetDataChannelLabel(dc, pBuffer, size) {
   if (!dc) return 0;
   var label = WEBRTC.dataChannelsMap[dc].label;
-  stringToUTF8(label, pBuffer, size);
+  stringToUTF8(label, pBuffer >>> 0, size);
   return lengthBytesUTF8(label);
 }
 
@@ -9522,7 +9522,7 @@ function _rtcSendMessage(dc, pBuffer, size) {
   var dataChannel = WEBRTC.dataChannelsMap[dc];
   if (dataChannel.readyState != "open") return -1;
   if (size >= 0) {
-    var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer, size);
+    var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer >>> 0, size);
     if (heapBytes.buffer instanceof ArrayBuffer) {
       dataChannel.send(heapBytes);
     } else {
@@ -9617,7 +9617,7 @@ var _rtcSetMessageCallback = function(dc, messageCallback) {
       var byteArray = new Uint8Array(evt.data);
       var size = byteArray.length;
       var pBuffer = _malloc(size);
-      var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer, size);
+      var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer >>> 0, size);
       heapBytes.set(byteArray);
       ((a1, a2, a3) => dynCall_viii(messageCallback, a1, a2, a3))(pBuffer, size, userPointer);
       _free(pBuffer);
@@ -9685,7 +9685,7 @@ var WEBSOCKET = {
   allocUTF8FromString: function(str) {
     var strLen = lengthBytesUTF8(str);
     var strOnHeap = _malloc(strLen + 1);
-    stringToUTF8(str, strOnHeap, strLen + 1);
+    stringToUTF8(str, strOnHeap >>> 0, strLen + 1);
     return strOnHeap;
   },
   registerWebSocket: function(webSocket) {
@@ -9716,7 +9716,7 @@ function _wsSendMessage(ws, pBuffer, size) {
   var webSocket = WEBSOCKET.map[ws];
   if (webSocket.readyState != 1) return -1;
   if (size >= 0) {
-    var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer, size);
+    var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer >>> 0, size);
     if (heapBytes.buffer instanceof ArrayBuffer) {
       webSocket.send(heapBytes);
     } else {
@@ -9757,7 +9757,7 @@ var _wsSetMessageCallback = function(ws, messageCallback) {
       var byteArray = new Uint8Array(evt.data);
       var size = byteArray.byteLength;
       var pBuffer = _malloc(size);
-      var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer, size);
+      var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer >>> 0, size);
       heapBytes.set(byteArray);
       var userPointer = webSocket.rtcUserPointer || 0;
       ((a1, a2, a3) => dynCall_viii(messageCallback, a1, a2, a3))(pBuffer, size, userPointer);
