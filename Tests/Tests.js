@@ -5517,7 +5517,7 @@ function _rtcCreatePeerConnection(pUrls, pUsernames, pPasswords, nIceServers) {
   if (!window.RTCPeerConnection) return 0;
   var iceServers = [];
   for (var i = 0; i < nIceServers; ++i) {
-    var heap = Module["HEAPU32"];
+    var heap = (growMemViews(), HEAPU32);
     var pUrl = heap[pUrls / heap.BYTES_PER_ELEMENT + i >>> 0];
     var url = UTF8ToString(pUrl);
     var pUsername = heap[pUsernames / heap.BYTES_PER_ELEMENT + i >>> 0];
@@ -5577,7 +5577,7 @@ function _rtcSendMessage(dc, pBuffer, size) {
   var dataChannel = WEBRTC.dataChannelsMap[dc];
   if (dataChannel.readyState != "open") return -1;
   if (size >= 0) {
-    var heapBytes = new Uint8Array(Module["HEAPU8"].buffer, pBuffer, size);
+    var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer, size);
     if (heapBytes.buffer instanceof ArrayBuffer) {
       dataChannel.send(heapBytes);
     } else {
@@ -5672,7 +5672,7 @@ var _rtcSetMessageCallback = function(dc, messageCallback) {
       var byteArray = new Uint8Array(evt.data);
       var size = byteArray.length;
       var pBuffer = _malloc(size);
-      var heapBytes = new Uint8Array(Module["HEAPU8"].buffer, pBuffer, size);
+      var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer, size);
       heapBytes.set(byteArray);
       ((a1, a2, a3) => dynCall_viii(messageCallback, a1, a2, a3))(pBuffer, size, userPointer);
       _free(pBuffer);
