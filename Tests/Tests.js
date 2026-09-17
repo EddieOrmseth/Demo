@@ -1786,55 +1786,6 @@ function ___cxa_throw(ptr, type, destructor) {
   assert(false, "Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.");
 }
 
-function pthreadCreateProxied(pthread_ptr, attr, startRoutine, arg) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(2, 0, 1, pthread_ptr, attr, startRoutine, arg);
-  return ___pthread_create_js(pthread_ptr, attr, startRoutine, arg);
-}
-
-var _emscripten_has_threading_support = () => !!globalThis.SharedArrayBuffer;
-
-function ___pthread_create_js(pthread_ptr, attr, startRoutine, arg) {
-  pthread_ptr >>>= 0;
-  attr >>>= 0;
-  startRoutine >>>= 0;
-  arg >>>= 0;
-  if (!_emscripten_has_threading_support()) {
-    dbg("pthread_create: environment does not support SharedArrayBuffer, pthreads are not available");
-    return 6;
-  }
-  // List of JS objects that will transfer ownership to the Worker hosting the thread
-  var transferList = [];
-  var error = 0;
-  // Synchronously proxy the thread creation to main thread if possible. If we
-  // need to transfer ownership of objects, then proxy asynchronously via
-  // postMessage.
-  if (ENVIRONMENT_IS_PTHREAD && (transferList.length === 0 || error)) {
-    return pthreadCreateProxied(pthread_ptr, attr, startRoutine, arg);
-  }
-  // If on the main thread, and accessing Canvas/OffscreenCanvas failed, abort
-  // with the detected error.
-  if (error) return error;
-  var threadParams = {
-    startRoutine,
-    pthread_ptr,
-    arg,
-    transferList
-  };
-  if (ENVIRONMENT_IS_PTHREAD) {
-    // The prepopulated pool of web workers that can host pthreads is stored
-    // in the main JS thread. Therefore if a pthread is attempting to spawn a
-    // new thread, the thread creation must be deferred to the main JS thread.
-    threadParams.cmd = "spawnThread";
-    postMessage(threadParams, transferList);
-    // When we defer thread creation this way, we have no way to detect thread
-    // creation synchronously today, so we have to assume success and return 0.
-    return 0;
-  }
-  // We are the main thread, so we have the pthread warmup pool in this
-  // thread and can fire off JS thread creation directly ourselves.
-  return spawnThread(threadParams);
-}
-
 function ___resumeException(ptr) {
   ptr >>>= 0;
   assert(false, "Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.");
@@ -4463,7 +4414,7 @@ var SYSCALLS = {
 };
 
 function ___syscall_fcntl64(fd, cmd, varargs) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(3, 0, 1, fd, cmd, varargs);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(2, 0, 1, fd, cmd, varargs);
   varargs >>>= 0;
   SYSCALLS.varargs = varargs;
   try {
@@ -4524,7 +4475,7 @@ function ___syscall_fcntl64(fd, cmd, varargs) {
 }
 
 function ___syscall_fstat64(fd, buf) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(4, 0, 1, fd, buf);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(3, 0, 1, fd, buf);
   buf >>>= 0;
   try {
     return SYSCALLS.writeStat(buf, FS.fstat(fd));
@@ -4540,7 +4491,7 @@ var stringToUTF8 = (str, outPtr, maxBytesToWrite) => {
 };
 
 function ___syscall_getcwd(buf, size) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(5, 0, 1, buf, size);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(4, 0, 1, buf, size);
   buf >>>= 0;
   size >>>= 0;
   try {
@@ -4557,7 +4508,7 @@ function ___syscall_getcwd(buf, size) {
 }
 
 function ___syscall_ioctl(fd, op, varargs) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(6, 0, 1, fd, op, varargs);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(5, 0, 1, fd, op, varargs);
   varargs >>>= 0;
   SYSCALLS.varargs = varargs;
   try {
@@ -4681,7 +4632,7 @@ function ___syscall_ioctl(fd, op, varargs) {
 }
 
 function ___syscall_lstat64(path, buf) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(7, 0, 1, path, buf);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(6, 0, 1, path, buf);
   path >>>= 0;
   buf >>>= 0;
   try {
@@ -4694,7 +4645,7 @@ function ___syscall_lstat64(path, buf) {
 }
 
 function ___syscall_mkdirat(dirfd, path, mode) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(8, 0, 1, dirfd, path, mode);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(7, 0, 1, dirfd, path, mode);
   path >>>= 0;
   try {
     path = SYSCALLS.getStr(path);
@@ -4709,7 +4660,7 @@ function ___syscall_mkdirat(dirfd, path, mode) {
 }
 
 function ___syscall_newfstatat(dirfd, path, buf, flags) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(9, 0, 1, dirfd, path, buf, flags);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(8, 0, 1, dirfd, path, buf, flags);
   path >>>= 0;
   buf >>>= 0;
   try {
@@ -4727,7 +4678,7 @@ function ___syscall_newfstatat(dirfd, path, buf, flags) {
 }
 
 function ___syscall_openat(dirfd, path, flags, varargs) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(10, 0, 1, dirfd, path, flags, varargs);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(9, 0, 1, dirfd, path, flags, varargs);
   path >>>= 0;
   varargs >>>= 0;
   SYSCALLS.varargs = varargs;
@@ -4746,7 +4697,7 @@ function ___syscall_openat(dirfd, path, flags, varargs) {
 }
 
 function ___syscall_stat64(path, buf) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(11, 0, 1, path, buf);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(10, 0, 1, path, buf);
   path >>>= 0;
   buf >>>= 0;
   try {
@@ -5150,13 +5101,6 @@ function _emscripten_resize_heap(requestedSize) {
   return false;
 }
 
-var _emscripten_sleep = function(ms) {
-  let innerFunc = () => new Promise(resolve => setTimeout(resolve, ms));
-  return Asyncify.handleAsync(innerFunc);
-};
-
-_emscripten_sleep.isAsync = true;
-
 var ENV = {};
 
 var getExecutableName = () => thisProgram || "./this.program";
@@ -5191,7 +5135,7 @@ var getEnvStrings = () => {
 };
 
 function _environ_get(__environ, environ_buf) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(12, 0, 1, __environ, environ_buf);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(11, 0, 1, __environ, environ_buf);
   __environ >>>= 0;
   environ_buf >>>= 0;
   var bufSize = 0;
@@ -5206,7 +5150,7 @@ function _environ_get(__environ, environ_buf) {
 }
 
 function _environ_sizes_get(penviron_count, penviron_buf_size) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(13, 0, 1, penviron_count, penviron_buf_size);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(12, 0, 1, penviron_count, penviron_buf_size);
   penviron_count >>>= 0;
   penviron_buf_size >>>= 0;
   var strings = getEnvStrings();
@@ -5220,7 +5164,7 @@ function _environ_sizes_get(penviron_count, penviron_buf_size) {
 }
 
 function _fd_close(fd) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(14, 0, 1, fd);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(13, 0, 1, fd);
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
     FS.close(stream);
@@ -5232,7 +5176,7 @@ function _fd_close(fd) {
 }
 
 function _fd_fdstat_get(fd, pbuf) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(15, 0, 1, fd, pbuf);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(14, 0, 1, fd, pbuf);
   pbuf >>>= 0;
   try {
     var rightsBase = 0;
@@ -5274,7 +5218,7 @@ function _fd_fdstat_get(fd, pbuf) {
 };
 
 function _fd_read(fd, iov, iovcnt, pnum) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(16, 0, 1, fd, iov, iovcnt, pnum);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(15, 0, 1, fd, iov, iovcnt, pnum);
   iov >>>= 0;
   iovcnt >>>= 0;
   pnum >>>= 0;
@@ -5290,7 +5234,7 @@ function _fd_read(fd, iov, iovcnt, pnum) {
 }
 
 function _fd_seek(fd, offset, whence, newOffset) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(17, 0, 1, fd, offset, whence, newOffset);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(16, 0, 1, fd, offset, whence, newOffset);
   offset = bigintToI53Checked(offset);
   newOffset >>>= 0;
   try {
@@ -5328,7 +5272,7 @@ function _fd_seek(fd, offset, whence, newOffset) {
 };
 
 function _fd_write(fd, iov, iovcnt, pnum) {
-  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(18, 0, 1, fd, iov, iovcnt, pnum);
+  if (ENVIRONMENT_IS_PTHREAD) return proxyToMainThread(17, 0, 1, fd, iov, iovcnt, pnum);
   iov >>>= 0;
   iovcnt >>>= 0;
   pnum >>>= 0;
@@ -5346,392 +5290,6 @@ function _fd_write(fd, iov, iovcnt, pnum) {
 function _llvm_eh_typeid_for(type) {
   type >>>= 0;
   return type;
-}
-
-var WEBRTC = {
-  peerConnectionsMap: {},
-  dataChannelsMap: {},
-  nextId: 1,
-  allocUTF8FromString: function(str) {
-    var strLen = lengthBytesUTF8(str);
-    var strOnHeap = _malloc(strLen + 1);
-    stringToUTF8(str, strOnHeap >>> 0, strLen + 1);
-    return strOnHeap;
-  },
-  registerPeerConnection: function(peerConnection) {
-    var pc = WEBRTC.nextId++;
-    WEBRTC.peerConnectionsMap[pc] = peerConnection;
-    peerConnection.onnegotiationneeded = function() {
-      peerConnection.createOffer().then(function(offer) {
-        return WEBRTC.handleDescription(peerConnection, offer);
-      }).catch(function(err) {
-        console.error(err);
-      });
-    };
-    peerConnection.onicecandidate = function(evt) {
-      if (evt.candidate && evt.candidate.candidate) WEBRTC.handleCandidate(peerConnection, evt.candidate);
-    };
-    peerConnection.onconnectionstatechange = function() {
-      WEBRTC.handleConnectionStateChange(peerConnection, peerConnection.connectionState);
-    };
-    peerConnection.oniceconnectionstatechange = function() {
-      WEBRTC.handleIceStateChange(peerConnection, peerConnection.iceConnectionState);
-    };
-    peerConnection.onicegatheringstatechange = function() {
-      WEBRTC.handleGatheringStateChange(peerConnection, peerConnection.iceGatheringState);
-    };
-    peerConnection.onsignalingstatechange = function() {
-      WEBRTC.handleSignalingStateChange(peerConnection, peerConnection.signalingState);
-    };
-    return pc;
-  },
-  registerDataChannel: function(dataChannel) {
-    var dc = WEBRTC.nextId++;
-    WEBRTC.dataChannelsMap[dc] = dataChannel;
-    dataChannel.binaryType = "arraybuffer";
-    return dc;
-  },
-  handleDescription: function(peerConnection, description) {
-    return peerConnection.setLocalDescription(description).then(function() {
-      if (peerConnection.rtcUserDeleted) return;
-      if (!peerConnection.rtcDescriptionCallback) return;
-      var desc = peerConnection.localDescription;
-      var pSdp = WEBRTC.allocUTF8FromString(desc.sdp);
-      var pType = WEBRTC.allocUTF8FromString(desc.type);
-      var callback = peerConnection.rtcDescriptionCallback;
-      var userPointer = peerConnection.rtcUserPointer || 0;
-      ((a1, a2, a3) => dynCall_viii(callback, a1, a2, a3))(pSdp, pType, userPointer);
-      _free(pSdp);
-      _free(pType);
-    });
-  },
-  handleCandidate: function(peerConnection, candidate) {
-    if (peerConnection.rtcUserDeleted) return;
-    if (!peerConnection.rtcCandidateCallback) return;
-    var pCandidate = WEBRTC.allocUTF8FromString(candidate.candidate);
-    var pSdpMid = WEBRTC.allocUTF8FromString(candidate.sdpMid);
-    var candidateCallback = peerConnection.rtcCandidateCallback;
-    var userPointer = peerConnection.rtcUserPointer || 0;
-    ((a1, a2, a3) => dynCall_viii(candidateCallback, a1, a2, a3))(pCandidate, pSdpMid, userPointer);
-    _free(pCandidate);
-    _free(pSdpMid);
-  },
-  handleConnectionStateChange: function(peerConnection, connectionState) {
-    if (peerConnection.rtcUserDeleted) return;
-    if (!peerConnection.rtcStateChangeCallback) return;
-    var map = {
-      "new": 0,
-      "connecting": 1,
-      "connected": 2,
-      "disconnected": 3,
-      "failed": 4,
-      "closed": 5
-    };
-    if (connectionState in map) {
-      var stateChangeCallback = peerConnection.rtcStateChangeCallback;
-      var userPointer = peerConnection.rtcUserPointer || 0;
-      ((a1, a2) => dynCall_vii(stateChangeCallback, a1, a2))(map[connectionState], userPointer);
-    }
-  },
-  handleIceStateChange: function(peerConnection, iceConnectionState) {
-    if (peerConnection.rtcUserDeleted) return;
-    if (!peerConnection.rtcIceStateChangeCallback) return;
-    var map = {
-      "new": 0,
-      "checking": 1,
-      "connected": 2,
-      "completed": 3,
-      "failed": 4,
-      "disconnected": 5,
-      "closed": 6
-    };
-    if (iceConnectionState in map) {
-      var iceStateChangeCallback = peerConnection.rtcIceStateChangeCallback;
-      var userPointer = peerConnection.rtcUserPointer || 0;
-      ((a1, a2) => dynCall_vii(iceStateChangeCallback, a1, a2))(map[iceConnectionState], userPointer);
-    }
-  },
-  handleGatheringStateChange: function(peerConnection, iceGatheringState) {
-    if (peerConnection.rtcUserDeleted) return;
-    if (!peerConnection.rtcGatheringStateChangeCallback) return;
-    var map = {
-      "new": 0,
-      "gathering": 1,
-      "complete": 2
-    };
-    if (iceGatheringState in map) {
-      var gatheringStateChangeCallback = peerConnection.rtcGatheringStateChangeCallback;
-      var userPointer = peerConnection.rtcUserPointer || 0;
-      ((a1, a2) => dynCall_vii(gatheringStateChangeCallback, a1, a2))(map[iceGatheringState], userPointer);
-    }
-  },
-  handleSignalingStateChange: function(peerConnection, signalingState) {
-    if (peerConnection.rtcUserDeleted) return;
-    if (!peerConnection.rtcSignalingStateChangeCallback) return;
-    var map = {
-      "stable": 0,
-      "have-local-offer": 1,
-      "have-remote-offer": 2,
-      "have-local-pranswer": 3,
-      "have-remote-pranswer": 4
-    };
-    if (signalingState in map) {
-      var signalingStateChangeCallback = peerConnection.rtcSignalingStateChangeCallback;
-      var userPointer = peerConnection.rtcUserPointer || 0;
-      ((a1, a2) => dynCall_vii(signalingStateChangeCallback, a1, a2))(map[signalingState], userPointer);
-    }
-  }
-};
-
-function _rtcAddRemoteCandidate(pc, pCandidate, pSdpMid) {
-  var iceCandidate = new RTCIceCandidate({
-    candidate: UTF8ToString(pCandidate),
-    sdpMid: UTF8ToString(pSdpMid)
-  });
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.addIceCandidate(iceCandidate).catch(function(err) {
-    console.error(err);
-  });
-}
-
-function _rtcCloseDataChannel(dc) {
-  if (!dc) return;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  dataChannel.close();
-}
-
-function _rtcCreateDataChannel(pc, pLabel, unordered, maxRetransmits, maxPacketLifeTime) {
-  if (!pc) return 0;
-  var label = UTF8ToString(pLabel);
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  var datachannelInit = {
-    ordered: !unordered
-  };
-  // Browsers throw an exception when both are present (even if set to null)
-  if (maxRetransmits >= 0) datachannelInit.maxRetransmits = maxRetransmits; else if (maxPacketLifeTime >= 0) datachannelInit.maxPacketLifeTime = maxPacketLifeTime;
-  var channel = peerConnection.createDataChannel(label, datachannelInit);
-  return WEBRTC.registerDataChannel(channel);
-}
-
-function _rtcCreatePeerConnection(pUrls, pUsernames, pPasswords, nIceServers) {
-  if (!window.RTCPeerConnection) return 0;
-  var iceServers = [];
-  for (var i = 0; i < nIceServers; ++i) {
-    var heap = (growMemViews(), HEAPU32);
-    var pUrl = heap[(pUrls >>> 0) / heap.BYTES_PER_ELEMENT + i >>> 0];
-    var url = UTF8ToString(pUrl);
-    var pUsername = heap[(pUsernames >>> 0) / heap.BYTES_PER_ELEMENT + i >>> 0];
-    var username = UTF8ToString(pUsername);
-    var pPassword = heap[(pPasswords >>> 0) / heap.BYTES_PER_ELEMENT + i >>> 0];
-    var password = UTF8ToString(pPassword);
-    if (username == "") {
-      iceServers.push({
-        urls: [ url ]
-      });
-    } else {
-      iceServers.push({
-        urls: [ url ],
-        username,
-        credential: password
-      });
-    }
-  }
-  var config = {
-    iceServers
-  };
-  return WEBRTC.registerPeerConnection(new RTCPeerConnection(config));
-}
-
-function _rtcDeleteDataChannel(dc) {
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  if (dataChannel) {
-    dataChannel.rtcUserDeleted = true;
-    delete WEBRTC.dataChannelsMap[dc];
-  }
-}
-
-function _rtcDeletePeerConnection(pc) {
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection.rtcUserDeleted = true;
-    delete WEBRTC.peerConnectionsMap[pc];
-  }
-}
-
-function _rtcGetBufferedAmount(dc) {
-  if (!dc) return 0;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  return dataChannel.bufferedAmount;
-}
-
-function _rtcGetDataChannelLabel(dc, pBuffer, size) {
-  if (!dc) return 0;
-  var label = WEBRTC.dataChannelsMap[dc].label;
-  stringToUTF8(label, pBuffer >>> 0, size);
-  return lengthBytesUTF8(label);
-}
-
-function _rtcSendMessage(dc, pBuffer, size) {
-  if (!dc) return -1;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  if (dataChannel.readyState != "open") return -1;
-  if (size >= 0) {
-    var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer >>> 0, size);
-    if (heapBytes.buffer instanceof ArrayBuffer) {
-      dataChannel.send(heapBytes);
-    } else {
-      var byteArray = new Uint8Array(new ArrayBuffer(size));
-      byteArray.set(heapBytes);
-      dataChannel.send(byteArray);
-    }
-    return size;
-  } else {
-    var str = UTF8ToString(pBuffer);
-    dataChannel.send(str);
-    return lengthBytesUTF8(str);
-  }
-}
-
-var _rtcSetBufferedAmountLowCallback = function(dc, bufferedAmountLowCallback) {
-  if (!dc) return;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  var cb = function(evt) {
-    if (dataChannel.rtcUserDeleted) return;
-    var userPointer = dataChannel.rtcUserPointer || 0;
-    (a1 => dynCall_vi(bufferedAmountLowCallback, a1))(userPointer);
-  };
-  dataChannel.onbufferedamountlow = cb;
-};
-
-function _rtcSetBufferedAmountLowThreshold(dc, threshold) {
-  if (!dc) return;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  dataChannel.bufferedAmountLowThreshold = threshold;
-}
-
-var _rtcSetDataChannelCallback = function(pc, dataChannelCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.ondatachannel = function(evt) {
-    if (peerConnection.rtcUserDeleted) return;
-    var dc = WEBRTC.registerDataChannel(evt.channel);
-    var userPointer = peerConnection.rtcUserPointer || 0;
-    ((a1, a2) => dynCall_vii(dataChannelCallback, a1, a2))(dc, userPointer);
-  };
-};
-
-var _rtcSetErrorCallback = function(dc, errorCallback) {
-  if (!dc) return;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  var cb = function(evt) {
-    if (dataChannel.rtcUserDeleted) return;
-    var userPointer = dataChannel.rtcUserPointer || 0;
-    var pError = evt.message ? WEBRTC.allocUTF8FromString(evt.message) : 0;
-    ((a1, a2) => dynCall_vii(errorCallback, a1, a2))(pError, userPointer);
-    _free(pError);
-  };
-  dataChannel.onerror = cb;
-};
-
-function _rtcSetGatheringStateChangeCallback(pc, gatheringStateChangeCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.rtcGatheringStateChangeCallback = gatheringStateChangeCallback;
-}
-
-function _rtcSetIceStateChangeCallback(pc, iceStateChangeCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.rtcIceStateChangeCallback = iceStateChangeCallback;
-}
-
-function _rtcSetLocalCandidateCallback(pc, candidateCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.rtcCandidateCallback = candidateCallback;
-}
-
-function _rtcSetLocalDescriptionCallback(pc, descriptionCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.rtcDescriptionCallback = descriptionCallback;
-}
-
-var _rtcSetMessageCallback = function(dc, messageCallback) {
-  if (!dc) return;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  dataChannel.onmessage = function(evt) {
-    if (dataChannel.rtcUserDeleted) return;
-    var userPointer = dataChannel.rtcUserPointer || 0;
-    if (typeof evt.data == "string") {
-      var pStr = WEBRTC.allocUTF8FromString(evt.data);
-      ((a1, a2, a3) => dynCall_viii(messageCallback, a1, a2, a3))(pStr, -1, userPointer);
-      _free(pStr);
-    } else {
-      var byteArray = new Uint8Array(evt.data);
-      var size = byteArray.length;
-      var pBuffer = _malloc(size);
-      var heapBytes = new Uint8Array((growMemViews(), HEAPU8).buffer, pBuffer >>> 0, size);
-      heapBytes.set(byteArray);
-      ((a1, a2, a3) => dynCall_viii(messageCallback, a1, a2, a3))(pBuffer, size, userPointer);
-      _free(pBuffer);
-    }
-  };
-  dataChannel.onclose = function() {
-    if (dataChannel.rtcUserDeleted) return;
-    var userPointer = dataChannel.rtcUserPointer || 0;
-    ((a1, a2, a3) => dynCall_viii(messageCallback, a1, a2, a3))(0, 0, userPointer);
-  };
-};
-
-var _rtcSetOpenCallback = function(dc, openCallback) {
-  if (!dc) return;
-  var dataChannel = WEBRTC.dataChannelsMap[dc];
-  var cb = function() {
-    if (dataChannel.rtcUserDeleted) return;
-    var userPointer = dataChannel.rtcUserPointer || 0;
-    (a1 => dynCall_vi(openCallback, a1))(userPointer);
-  };
-  dataChannel.onopen = cb;
-  if (dataChannel.readyState == "open") setTimeout(cb, 0);
-};
-
-function _rtcSetRemoteDescription(pc, pSdp, pType) {
-  var description = new RTCSessionDescription({
-    sdp: UTF8ToString(pSdp),
-    type: UTF8ToString(pType)
-  });
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.setRemoteDescription(description).then(function() {
-    if (peerConnection.rtcUserDeleted) return;
-    if (description.type == "offer") {
-      peerConnection.createAnswer().then(function(answer) {
-        return WEBRTC.handleDescription(peerConnection, answer);
-      }).catch(function(err) {
-        console.error(err);
-      });
-    }
-  }).catch(function(err) {
-    console.error(err);
-  });
-}
-
-function _rtcSetSignalingStateChangeCallback(pc, signalingStateChangeCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.rtcSignalingStateChangeCallback = signalingStateChangeCallback;
-}
-
-function _rtcSetStateChangeCallback(pc, stateChangeCallback) {
-  if (!pc) return;
-  var peerConnection = WEBRTC.peerConnectionsMap[pc];
-  peerConnection.rtcStateChangeCallback = stateChangeCallback;
-}
-
-function _rtcSetUserPointer(i, ptr) {
-  if (WEBRTC.peerConnectionsMap[i]) WEBRTC.peerConnectionsMap[i].rtcUserPointer = ptr;
-  if (WEBRTC.dataChannelsMap[i]) WEBRTC.dataChannelsMap[i].rtcUserPointer = ptr;
 }
 
 var stringToUTF8OnStack = str => {
@@ -6083,7 +5641,7 @@ unexportedSymbols.forEach(unexportedRuntimeSymbol);
 // either synchronously or asynchronously from other threads in postMessage()d
 // or internally queued events. This way a pthread in a Worker can synchronously
 // access e.g. the DOM on the main thread.
-var proxiedFunctionTable = [ _proc_exit, exitOnMainThread, pthreadCreateProxied, ___syscall_fcntl64, ___syscall_fstat64, ___syscall_getcwd, ___syscall_ioctl, ___syscall_lstat64, ___syscall_mkdirat, ___syscall_newfstatat, ___syscall_openat, ___syscall_stat64, _environ_get, _environ_sizes_get, _fd_close, _fd_fdstat_get, _fd_read, _fd_seek, _fd_write ];
+var proxiedFunctionTable = [ _proc_exit, exitOnMainThread, ___syscall_fcntl64, ___syscall_fstat64, ___syscall_getcwd, ___syscall_ioctl, ___syscall_lstat64, ___syscall_mkdirat, ___syscall_newfstatat, ___syscall_openat, ___syscall_stat64, _environ_get, _environ_sizes_get, _fd_close, _fd_fdstat_get, _fd_read, _fd_seek, _fd_write ];
 
 function checkIncomingModuleAPI() {
   ignoredModuleProp("fetchSettings");
@@ -6154,19 +5712,19 @@ var dynCall_ii = makeInvalidEarlyAccess("dynCall_ii");
 
 var dynCall_vi = makeInvalidEarlyAccess("dynCall_vi");
 
-var dynCall_viiiii = makeInvalidEarlyAccess("dynCall_viiiii");
-
-var dynCall_iii = makeInvalidEarlyAccess("dynCall_iii");
+var dynCall_v = makeInvalidEarlyAccess("dynCall_v");
 
 var dynCall_vii = makeInvalidEarlyAccess("dynCall_vii");
 
-var dynCall_viii = makeInvalidEarlyAccess("dynCall_viii");
+var dynCall_iii = makeInvalidEarlyAccess("dynCall_iii");
 
-var dynCall_v = makeInvalidEarlyAccess("dynCall_v");
+var dynCall_viii = makeInvalidEarlyAccess("dynCall_viii");
 
 var dynCall_iiiiiii = makeInvalidEarlyAccess("dynCall_iiiiiii");
 
 var dynCall_iiii = makeInvalidEarlyAccess("dynCall_iiii");
+
+var dynCall_viiiii = makeInvalidEarlyAccess("dynCall_viiiii");
 
 var dynCall_viiiiii = makeInvalidEarlyAccess("dynCall_viiiiii");
 
@@ -6242,13 +5800,13 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports["dynCall_viiii"] != "undefined", "missing Wasm export: dynCall_viiii");
   assert(typeof wasmExports["dynCall_ii"] != "undefined", "missing Wasm export: dynCall_ii");
   assert(typeof wasmExports["dynCall_vi"] != "undefined", "missing Wasm export: dynCall_vi");
-  assert(typeof wasmExports["dynCall_viiiii"] != "undefined", "missing Wasm export: dynCall_viiiii");
-  assert(typeof wasmExports["dynCall_iii"] != "undefined", "missing Wasm export: dynCall_iii");
-  assert(typeof wasmExports["dynCall_vii"] != "undefined", "missing Wasm export: dynCall_vii");
-  assert(typeof wasmExports["dynCall_viii"] != "undefined", "missing Wasm export: dynCall_viii");
   assert(typeof wasmExports["dynCall_v"] != "undefined", "missing Wasm export: dynCall_v");
+  assert(typeof wasmExports["dynCall_vii"] != "undefined", "missing Wasm export: dynCall_vii");
+  assert(typeof wasmExports["dynCall_iii"] != "undefined", "missing Wasm export: dynCall_iii");
+  assert(typeof wasmExports["dynCall_viii"] != "undefined", "missing Wasm export: dynCall_viii");
   assert(typeof wasmExports["dynCall_iiiiiii"] != "undefined", "missing Wasm export: dynCall_iiiiiii");
   assert(typeof wasmExports["dynCall_iiii"] != "undefined", "missing Wasm export: dynCall_iiii");
+  assert(typeof wasmExports["dynCall_viiiii"] != "undefined", "missing Wasm export: dynCall_viiiii");
   assert(typeof wasmExports["dynCall_viiiiii"] != "undefined", "missing Wasm export: dynCall_viiiiii");
   assert(typeof wasmExports["dynCall_iiiii"] != "undefined", "missing Wasm export: dynCall_iiiii");
   assert(typeof wasmExports["dynCall_iiiiii"] != "undefined", "missing Wasm export: dynCall_iiiiii");
@@ -6299,13 +5857,13 @@ function assignWasmExports(wasmExports) {
   dynCall_viiii = dynCalls["viiii"] = createExportWrapper("dynCall_viiii", 5);
   dynCall_ii = dynCalls["ii"] = createExportWrapper("dynCall_ii", 2);
   dynCall_vi = dynCalls["vi"] = createExportWrapper("dynCall_vi", 2);
-  dynCall_viiiii = dynCalls["viiiii"] = createExportWrapper("dynCall_viiiii", 6);
-  dynCall_iii = dynCalls["iii"] = createExportWrapper("dynCall_iii", 3);
-  dynCall_vii = dynCalls["vii"] = createExportWrapper("dynCall_vii", 3);
-  dynCall_viii = dynCalls["viii"] = createExportWrapper("dynCall_viii", 4);
   dynCall_v = dynCalls["v"] = createExportWrapper("dynCall_v", 1);
+  dynCall_vii = dynCalls["vii"] = createExportWrapper("dynCall_vii", 3);
+  dynCall_iii = dynCalls["iii"] = createExportWrapper("dynCall_iii", 3);
+  dynCall_viii = dynCalls["viii"] = createExportWrapper("dynCall_viii", 4);
   dynCall_iiiiiii = dynCalls["iiiiiii"] = createExportWrapper("dynCall_iiiiiii", 7);
   dynCall_iiii = dynCalls["iiii"] = createExportWrapper("dynCall_iiii", 4);
+  dynCall_viiiii = dynCalls["viiiii"] = createExportWrapper("dynCall_viiiii", 6);
   dynCall_viiiiii = dynCalls["viiiiii"] = createExportWrapper("dynCall_viiiiii", 7);
   dynCall_iiiii = dynCalls["iiiii"] = createExportWrapper("dynCall_iiiii", 5);
   dynCall_iiiiii = dynCalls["iiiiii"] = createExportWrapper("dynCall_iiiiii", 6);
@@ -6341,7 +5899,6 @@ function assignWasmImports() {
     /** @export */ __cxa_find_matching_catch_6: ___cxa_find_matching_catch_6,
     /** @export */ __cxa_rethrow: ___cxa_rethrow,
     /** @export */ __cxa_throw: ___cxa_throw,
-    /** @export */ __pthread_create_js: ___pthread_create_js,
     /** @export */ __resumeException: ___resumeException,
     /** @export */ __syscall_fcntl64: ___syscall_fcntl64,
     /** @export */ __syscall_fstat64: ___syscall_fstat64,
@@ -6366,7 +5923,6 @@ function assignWasmImports() {
     /** @export */ emscripten_exit_with_live_runtime: _emscripten_exit_with_live_runtime,
     /** @export */ emscripten_get_now: _emscripten_get_now,
     /** @export */ emscripten_resize_heap: _emscripten_resize_heap,
-    /** @export */ emscripten_sleep: _emscripten_sleep,
     /** @export */ environ_get: _environ_get,
     /** @export */ environ_sizes_get: _environ_sizes_get,
     /** @export */ exit: _exit,
@@ -6394,30 +5950,7 @@ function assignWasmImports() {
     /** @export */ invoke_viiiiii,
     /** @export */ invoke_vij,
     /** @export */ llvm_eh_typeid_for: _llvm_eh_typeid_for,
-    /** @export */ memory: wasmMemory,
-    /** @export */ rtcAddRemoteCandidate: _rtcAddRemoteCandidate,
-    /** @export */ rtcCloseDataChannel: _rtcCloseDataChannel,
-    /** @export */ rtcCreateDataChannel: _rtcCreateDataChannel,
-    /** @export */ rtcCreatePeerConnection: _rtcCreatePeerConnection,
-    /** @export */ rtcDeleteDataChannel: _rtcDeleteDataChannel,
-    /** @export */ rtcDeletePeerConnection: _rtcDeletePeerConnection,
-    /** @export */ rtcGetBufferedAmount: _rtcGetBufferedAmount,
-    /** @export */ rtcGetDataChannelLabel: _rtcGetDataChannelLabel,
-    /** @export */ rtcSendMessage: _rtcSendMessage,
-    /** @export */ rtcSetBufferedAmountLowCallback: _rtcSetBufferedAmountLowCallback,
-    /** @export */ rtcSetBufferedAmountLowThreshold: _rtcSetBufferedAmountLowThreshold,
-    /** @export */ rtcSetDataChannelCallback: _rtcSetDataChannelCallback,
-    /** @export */ rtcSetErrorCallback: _rtcSetErrorCallback,
-    /** @export */ rtcSetGatheringStateChangeCallback: _rtcSetGatheringStateChangeCallback,
-    /** @export */ rtcSetIceStateChangeCallback: _rtcSetIceStateChangeCallback,
-    /** @export */ rtcSetLocalCandidateCallback: _rtcSetLocalCandidateCallback,
-    /** @export */ rtcSetLocalDescriptionCallback: _rtcSetLocalDescriptionCallback,
-    /** @export */ rtcSetMessageCallback: _rtcSetMessageCallback,
-    /** @export */ rtcSetOpenCallback: _rtcSetOpenCallback,
-    /** @export */ rtcSetRemoteDescription: _rtcSetRemoteDescription,
-    /** @export */ rtcSetSignalingStateChangeCallback: _rtcSetSignalingStateChangeCallback,
-    /** @export */ rtcSetStateChangeCallback: _rtcSetStateChangeCallback,
-    /** @export */ rtcSetUserPointer: _rtcSetUserPointer
+    /** @export */ memory: wasmMemory
   };
 }
 
