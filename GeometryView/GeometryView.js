@@ -10303,7 +10303,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
       },
   instrumentWasmExports(exports) {
-        var exportPattern = /^(main|__main_argc_argv)$/;
+        var exportPattern = /^(main|__main_argc_argv|__wasm_call_ctors|main|__main_argc_argv)$/;
         Asyncify.asyncExports = new Set();
         var ret = {};
         for (let [x, original] of Object.entries(exports)) {
