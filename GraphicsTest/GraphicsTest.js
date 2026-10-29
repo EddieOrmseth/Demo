@@ -90,6 +90,22 @@ if (ENVIRONMENT_IS_NODE) {
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
+// include: /home/eddie/programming/2DGameEngine/config/wasm/jspi_fix.js
+// Emscripten's JSPI preamble wraps all `invoke_*` C++ exception trampolines in
+// `new WebAssembly.Suspending(...)`. However, `invoke_*` functions are synchronous
+// JS trampolines that never return a Promise, and wrapping them in
+// `WebAssembly.Suspending` causes V8 to throw `SuspendError` whenever `invoke_*`
+// is called inside `__wasm_call_ctors` or nested inside another `invoke_*` frame.
+if (typeof WebAssembly !== 'undefined' && WebAssembly.Suspending) {
+  const _OrigSuspending = WebAssembly.Suspending;
+  WebAssembly.Suspending = function(fn) {
+    if (fn && fn.name && fn.name.startsWith('invoke_')) {
+      return fn;
+    }
+    return new _OrigSuspending(fn);
+  };
+}
+// end include: /home/eddie/programming/2DGameEngine/config/wasm/jspi_fix.js
 
 
 var arguments_ = [];
@@ -10031,7 +10047,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
       },
   instrumentWasmExports(exports) {
-        var exportPattern = /^(main|__main_argc_argv|__wasm_call_ctors|main|__main_argc_argv)$/;
+        var exportPattern = /^(main|__main_argc_argv)$/;
         Asyncify.asyncExports = new Set();
         var ret = {};
         for (let [x, original] of Object.entries(exports)) {
@@ -10652,12 +10668,12 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('onFree');
   ignoredModuleProp('onSbrkGrow');
 }
+function __asyncjs__js_yield_asap() { return Asyncify.handleAsync(async () => { await new Promise(resolve => { if (! self._yieldChannel) { self._yieldChannel = new MessageChannel(); } self._yieldChannel.port1.onmessage = resolve; self._yieldChannel.port2.postMessage(null); }); }); }
+__asyncjs__js_yield_asap.sig = 'v';
+function __asyncjs__js_wait_vsync() { return Asyncify.handleAsync(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); }); }
+__asyncjs__js_wait_vsync.sig = 'v';
 function __asyncjs__web_measure_max_fps() { return Asyncify.handleAsync(async () => { const deltas = []; let prev = await new Promise(r => requestAnimationFrame(r)); prev = await new Promise(r => requestAnimationFrame(r)); for (let i = 0; i < 10; i++) { const now = await new Promise(r => requestAnimationFrame(r)); deltas.push(now - prev); prev = now; } deltas.sort((a, b) => a - b); const medianDelta = deltas[Math.floor(deltas.length / 2)]; const rawFPS = medianDelta > 0 ? (1000.0 / medianDelta) : 60.0; const standardRates = [30, 60, 72, 75, 90, 100, 120, 144, 165, 240, 360, 480]; let bestRate = Math.round(rawFPS); let bestDiff = Infinity; for (const rate of standardRates) { const diff = Math.abs(rawFPS - rate); if (diff < bestDiff && diff <= rate * 0.05) { bestDiff = diff; bestRate = rate; } } return bestRate; }); }
 __asyncjs__web_measure_max_fps.sig = 'i';
-function __asyncjs__web_yield_asap() { return Asyncify.handleAsync(async () => { await new Promise(resolve => { if (! self._yieldChannel) { self._yieldChannel = new MessageChannel(); } self._yieldChannel.port1.onmessage = resolve; self._yieldChannel.port2.postMessage(null); }); }); }
-__asyncjs__web_yield_asap.sig = 'v';
-function __asyncjs__web_wait_vsync() { return Asyncify.handleAsync(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); }); }
-__asyncjs__web_wait_vsync.sig = 'v';
 function ImGui_ImplGlfw_EmscriptenOpenURL(url) { url = url ? UTF8ToString(url) : null; if (url) window.open(url, '_blank'); }
 
 // Imports from the Wasm binary.
@@ -10849,11 +10865,11 @@ function assignWasmExports(wasmExports) {
     /** @export */
     __assert_fail: ___assert_fail,
     /** @export */
+    __asyncjs__js_wait_vsync,
+    /** @export */
+    __asyncjs__js_yield_asap,
+    /** @export */
     __asyncjs__web_measure_max_fps,
-    /** @export */
-    __asyncjs__web_wait_vsync,
-    /** @export */
-    __asyncjs__web_yield_asap,
     /** @export */
     __cxa_throw: ___cxa_throw,
     /** @export */

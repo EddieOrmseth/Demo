@@ -90,6 +90,22 @@ if (ENVIRONMENT_IS_NODE) {
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
+// include: /home/eddie/programming/2DGameEngine/config/wasm/jspi_fix.js
+// Emscripten's JSPI preamble wraps all `invoke_*` C++ exception trampolines in
+// `new WebAssembly.Suspending(...)`. However, `invoke_*` functions are synchronous
+// JS trampolines that never return a Promise, and wrapping them in
+// `WebAssembly.Suspending` causes V8 to throw `SuspendError` whenever `invoke_*`
+// is called inside `__wasm_call_ctors` or nested inside another `invoke_*` frame.
+if (typeof WebAssembly !== 'undefined' && WebAssembly.Suspending) {
+  const _OrigSuspending = WebAssembly.Suspending;
+  WebAssembly.Suspending = function(fn) {
+    if (fn && fn.name && fn.name.startsWith('invoke_')) {
+      return fn;
+    }
+    return new _OrigSuspending(fn);
+  };
+}
+// end include: /home/eddie/programming/2DGameEngine/config/wasm/jspi_fix.js
 
 
 var arguments_ = [];
@@ -8552,7 +8568,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
       },
   instrumentWasmExports(exports) {
-        var exportPattern = /^(main|__main_argc_argv|__wasm_call_ctors|main|__main_argc_argv)$/;
+        var exportPattern = /^(main|__main_argc_argv)$/;
         Asyncify.asyncExports = new Set();
         var ret = {};
         for (let [x, original] of Object.entries(exports)) {
