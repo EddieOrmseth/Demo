@@ -7850,6 +7850,85 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     ;
   }
 
+  
+  
+  
+  var _emwgpuBufferGetConstMappedRange = (bufferPtr, offset, size) => {
+      var buffer = WebGPU.getJsObject(bufferPtr);
+  
+      if (size === 0) warnOnce('getMappedRange size=0 no longer means WGPU_WHOLE_MAP_SIZE');
+  
+      if (size == -1) size = undefined;
+  
+      var mapped;
+      try {
+        mapped = buffer.getMappedRange(offset, size);
+      } catch (ex) {
+        err(`buffer.getMappedRange(${offset}, ${size}) failed: ${ex}`);
+        return 0;
+      }
+      var data = _memalign(16, mapped.byteLength);
+      HEAPU8.set(new Uint8Array(mapped), data);
+      WebGPU.Internals.bufferOnUnmaps[bufferPtr].push(() => _free(data));
+      return data;
+    };
+
+  
+  
+  
+  
+  
+  var _emwgpuBufferMapAsync = function(bufferPtr, futureId, mode, offset, size) {
+    futureId = bigintToI53Checked(futureId);
+    mode = bigintToI53Checked(mode);
+  
+  
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      WebGPU.Internals.bufferOnUnmaps[bufferPtr] = [];
+  
+      if (size == -1) size = undefined;
+  
+      runtimeKeepalivePush(); // mapAsync
+      WebGPU.Internals.futureInsert(futureId, buffer.mapAsync(mode, offset, size).then(() => {
+        runtimeKeepalivePop(); // mapAsync fulfilled
+        callUserCallback(() => {
+          _emwgpuOnMapAsyncCompleted(futureId, 1,
+            0);
+        });
+      }, (ex) => {
+        runtimeKeepalivePop(); // mapAsync rejected
+        callUserCallback(() => {
+          var sp = stackSave();
+          var messagePtr = stringToUTF8OnStack(ex.message);
+          var status =
+            ex.name === 'AbortError' ? 4 :
+            ex.name === 'OperationError' ? 3 :
+            0;
+          assert(status);
+          _emwgpuOnMapAsyncCompleted(futureId, status, messagePtr);
+          delete WebGPU.Internals.bufferOnUnmaps[bufferPtr];
+        });
+      }));
+    ;
+  };
+
+  var _emwgpuBufferUnmap = (bufferPtr) => {
+      var buffer = WebGPU.getJsObject(bufferPtr);
+  
+      var onUnmap = WebGPU.Internals.bufferOnUnmaps[bufferPtr];
+      if (!onUnmap) {
+        // Already unmapped
+        return;
+      }
+  
+      for (var i = 0; i < onUnmap.length; ++i) {
+        onUnmap[i]();
+      }
+      delete WebGPU.Internals.bufferOnUnmaps[bufferPtr]
+  
+      buffer.unmap();
+    };
+
   var _emwgpuDelete = (ptr) => {
       delete WebGPU.Internals.jsObjects[ptr];
     };
@@ -7987,6 +8066,27 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }));
     ;
   }
+
+  
+  
+  
+  
+  
+  var _emwgpuQueueOnSubmittedWorkDone = function(queuePtr, futureId) {
+    futureId = bigintToI53Checked(futureId);
+  
+  
+      var queue = WebGPU.getJsObject(queuePtr);
+  
+      runtimeKeepalivePush(); // onSubmittedWorkDone
+      WebGPU.Internals.futureInsert(futureId, queue.onSubmittedWorkDone().then(() => {
+        runtimeKeepalivePop(); // onSubmittedWorkDone fulfilled (assumed not to reject)
+        callUserCallback(() => {
+          _emwgpuOnWorkDoneCompleted(futureId, 1);
+        });
+      }));
+    ;
+  };
 
   var ENV = {
   };
@@ -8222,6 +8322,102 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var _llvm_eh_typeid_for = (type) => type;
 
 
+  var _random_get = (buffer, size) => randomFill(HEAPU8.subarray(buffer, buffer + size));
+
+  
+  var _wgpuBufferGetSize = function(bufferPtr) {
+  
+  var ret = (() => { 
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      // 64-bit
+      return buffer.size;
+     })();
+  return BigInt(ret);
+  };
+
+  
+  var _wgpuCommandEncoderBeginComputePass = (encoderPtr, descriptor) => {
+      var desc;
+  
+      if (descriptor) {
+        assert(descriptor);assert(HEAPU32[((descriptor)>>2)] === 0);
+        desc = {
+          "label": WebGPU.makeStringFromOptionalStringView(
+            descriptor + 4),
+          "timestampWrites": WebGPU.makePassTimestampWrites(
+            HEAPU32[(((descriptor)+(12))>>2)]),
+        };
+      }
+      var commandEncoder = WebGPU.getJsObject(encoderPtr);
+      var ptr = _emwgpuCreateComputePassEncoder(0);
+      WebGPU.Internals.jsObjectInsert(ptr, commandEncoder.beginComputePass(desc));
+      return ptr;
+    };
+
+  
+  function _wgpuCommandEncoderCopyBufferToBuffer(encoderPtr, srcPtr, srcOffset, dstPtr, dstOffset, size) {
+    srcOffset = bigintToI53Checked(srcOffset);
+    dstOffset = bigintToI53Checked(dstOffset);
+    size = bigintToI53Checked(size);
+  
+  
+      var commandEncoder = WebGPU.getJsObject(encoderPtr);
+      var src = WebGPU.getJsObject(srcPtr);
+      var dst = WebGPU.getJsObject(dstPtr);
+      commandEncoder.copyBufferToBuffer(src, srcOffset, dst, dstOffset, size);
+    ;
+  }
+
+  
+  var _wgpuCommandEncoderFinish = (encoderPtr, descriptor) => {
+      // TODO: Use the descriptor.
+      var commandEncoder = WebGPU.getJsObject(encoderPtr);
+      var ptr = _emwgpuCreateCommandBuffer(0);
+      WebGPU.Internals.jsObjectInsert(ptr, commandEncoder.finish());
+      return ptr;
+    };
+
+  var _wgpuComputePassEncoderDispatchWorkgroups = (passPtr, x, y, z) => {
+      assert(x >= 0);
+      assert(y >= 0);
+      assert(z >= 0);
+      var pass = WebGPU.getJsObject(passPtr);
+      pass.dispatchWorkgroups(x, y, z);
+    };
+
+  
+  function _wgpuComputePassEncoderDispatchWorkgroupsIndirect(passPtr, indirectBufferPtr, indirectOffset) {
+    indirectOffset = bigintToI53Checked(indirectOffset);
+  
+  
+      var indirectBuffer = WebGPU.getJsObject(indirectBufferPtr);
+      var pass = WebGPU.getJsObject(passPtr);
+      pass.dispatchWorkgroupsIndirect(indirectBuffer, indirectOffset);
+    ;
+  }
+
+  var _wgpuComputePassEncoderEnd = (passPtr) => {
+      var pass = WebGPU.getJsObject(passPtr);
+      pass.end();
+    };
+
+  var _wgpuComputePassEncoderSetBindGroup = (passPtr, groupIndex, groupPtr, dynamicOffsetCount, dynamicOffsetsPtr) => {
+      assert(groupIndex >= 0);
+      var pass = WebGPU.getJsObject(passPtr);
+      var group = WebGPU.getJsObject(groupPtr);
+      if (dynamicOffsetCount == 0) {
+        pass.setBindGroup(groupIndex, group);
+      } else {
+        pass.setBindGroup(groupIndex, group, HEAPU32, ((dynamicOffsetsPtr)>>2), dynamicOffsetCount);
+      }
+    };
+
+  var _wgpuComputePassEncoderSetPipeline = (passPtr, pipelinePtr) => {
+      var pass = WebGPU.getJsObject(passPtr);
+      var pipeline = WebGPU.getJsObject(pipelinePtr);
+      pass.setPipeline(pipeline);
+    };
+
   var readI53FromI64 = (ptr) => {
       return HEAPU32[((ptr)>>2)] + HEAP32[(((ptr)+(4))>>2)] * 4294967296;
     };
@@ -8400,6 +8596,22 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
 
   
+  var _wgpuDeviceCreateCommandEncoder = (devicePtr, descriptor) => {
+      var desc;
+      if (descriptor) {
+        assert(descriptor);assert(HEAPU32[((descriptor)>>2)] === 0);
+        desc = {
+          "label": WebGPU.makeStringFromOptionalStringView(
+            descriptor + 4),
+        };
+      }
+      var device = WebGPU.getJsObject(devicePtr);
+      var ptr = _emwgpuCreateCommandEncoder(0);
+      WebGPU.Internals.jsObjectInsert(ptr, device.createCommandEncoder(desc));
+      return ptr;
+    };
+
+  
   var _wgpuDeviceCreateComputePipeline = (devicePtr, descriptor) => {
       var desc = WebGPU.makeComputePipelineDesc(descriptor);
       var device = WebGPU.getJsObject(devicePtr);
@@ -8504,6 +8716,28 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       WebGPU.Internals.jsObjectInsert(ptr, device.createTexture(desc));
       return ptr;
     };
+
+  var _wgpuQueueSubmit = (queuePtr, commandCount, commands) => {
+      assert(commands % 4 === 0);
+      var queue = WebGPU.getJsObject(queuePtr);
+      var cmds = Array.from(HEAP32.subarray((((commands)>>2)), ((commands + commandCount * 4)>>2)),
+        (id) => WebGPU.getJsObject(id));
+      queue.submit(cmds);
+    };
+
+  
+  function _wgpuQueueWriteBuffer(queuePtr, bufferPtr, bufferOffset, data, size) {
+    bufferOffset = bigintToI53Checked(bufferOffset);
+  
+  
+      var queue = WebGPU.getJsObject(queuePtr);
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      // There is a size limitation for ArrayBufferView. Work around by passing in a subarray
+      // instead of the whole heap. crbug.com/1201109
+      var subarray = HEAPU8.subarray(data, data + size);
+      queue.writeBuffer(buffer, bufferOffset, subarray, 0, size);
+    ;
+  }
 
   
   var _wgpuTextureCreateView = (texturePtr, descriptor) => {
@@ -9493,6 +9727,12 @@ function assignWasmExports(wasmExports) {
     /** @export */
     emwgpuAdapterRequestDevice: _emwgpuAdapterRequestDevice,
     /** @export */
+    emwgpuBufferGetConstMappedRange: _emwgpuBufferGetConstMappedRange,
+    /** @export */
+    emwgpuBufferMapAsync: _emwgpuBufferMapAsync,
+    /** @export */
+    emwgpuBufferUnmap: _emwgpuBufferUnmap,
+    /** @export */
     emwgpuDelete: _emwgpuDelete,
     /** @export */
     emwgpuDeviceCreateBuffer: _emwgpuDeviceCreateBuffer,
@@ -9502,6 +9742,8 @@ function assignWasmExports(wasmExports) {
     emwgpuDeviceDestroy: _emwgpuDeviceDestroy,
     /** @export */
     emwgpuInstanceRequestAdapter: _emwgpuInstanceRequestAdapter,
+    /** @export */
+    emwgpuQueueOnSubmittedWorkDone: _emwgpuQueueOnSubmittedWorkDone,
     /** @export */
     environ_get: _environ_get,
     /** @export */
@@ -9561,9 +9803,31 @@ function assignWasmExports(wasmExports) {
     /** @export */
     proc_exit: _proc_exit,
     /** @export */
+    random_get: _random_get,
+    /** @export */
+    wgpuBufferGetSize: _wgpuBufferGetSize,
+    /** @export */
+    wgpuCommandEncoderBeginComputePass: _wgpuCommandEncoderBeginComputePass,
+    /** @export */
+    wgpuCommandEncoderCopyBufferToBuffer: _wgpuCommandEncoderCopyBufferToBuffer,
+    /** @export */
+    wgpuCommandEncoderFinish: _wgpuCommandEncoderFinish,
+    /** @export */
+    wgpuComputePassEncoderDispatchWorkgroups: _wgpuComputePassEncoderDispatchWorkgroups,
+    /** @export */
+    wgpuComputePassEncoderDispatchWorkgroupsIndirect: _wgpuComputePassEncoderDispatchWorkgroupsIndirect,
+    /** @export */
+    wgpuComputePassEncoderEnd: _wgpuComputePassEncoderEnd,
+    /** @export */
+    wgpuComputePassEncoderSetBindGroup: _wgpuComputePassEncoderSetBindGroup,
+    /** @export */
+    wgpuComputePassEncoderSetPipeline: _wgpuComputePassEncoderSetPipeline,
+    /** @export */
     wgpuDeviceCreateBindGroup: _wgpuDeviceCreateBindGroup,
     /** @export */
     wgpuDeviceCreateBindGroupLayout: _wgpuDeviceCreateBindGroupLayout,
+    /** @export */
+    wgpuDeviceCreateCommandEncoder: _wgpuDeviceCreateCommandEncoder,
     /** @export */
     wgpuDeviceCreateComputePipeline: _wgpuDeviceCreateComputePipeline,
     /** @export */
@@ -9574,6 +9838,10 @@ function assignWasmExports(wasmExports) {
     wgpuDeviceCreateSampler: _wgpuDeviceCreateSampler,
     /** @export */
     wgpuDeviceCreateTexture: _wgpuDeviceCreateTexture,
+    /** @export */
+    wgpuQueueSubmit: _wgpuQueueSubmit,
+    /** @export */
+    wgpuQueueWriteBuffer: _wgpuQueueWriteBuffer,
     /** @export */
     wgpuTextureCreateView: _wgpuTextureCreateView
   };
