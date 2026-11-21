@@ -379,9 +379,19 @@ function checkStackCookie() {
 // end include: runtime_stack_check.js
 // include: runtime_exceptions.js
 // Base Emscripten EH error class
-class EmscriptenEH {}
+class EmscriptenEH extends Error {}
 
 class EmscriptenSjLj extends EmscriptenEH {}
+
+class CppException extends EmscriptenEH {
+  constructor(excPtr) {
+    super(excPtr);
+    this.excPtr = excPtr;
+    const excInfo = getExceptionMessage(this);
+    this.name = excInfo[0];
+    this.message = excInfo[1];
+  }
+}
 
 // end include: runtime_exceptions.js
 // include: runtime_debug.js
@@ -1788,6 +1798,8 @@ async function createWasm() {
 
   
   
+  
+  var exceptionLast = null;
   var ___cxa_end_catch = () => {
       // Clear state flag.
       _setThrew(0, 0);
@@ -1796,31 +1808,10 @@ async function createWasm() {
       var info = exceptionCaught.pop();
   
       ___cxa_decrement_exception_refcount(info.excPtr);
+      exceptionLast = null; // XXX in decRef?
     };
-
-  var findMatchingCatch = (args) => {
-      setTempRet0(0);
-      return 0;
-    };
-  var ___cxa_find_matching_catch_2 = () => findMatchingCatch([]);
-
-  var ___cxa_find_matching_catch_3 = (arg0) => findMatchingCatch([arg0]);
-
-  var ___cxa_find_matching_catch_6 = (arg0,arg1,arg2,arg3) => findMatchingCatch([arg0,arg1,arg2,arg3]);
 
   
-  var ___cxa_rethrow = () => {
-      if (!exceptionCaught.length) {
-        abort('no exception to throw');
-      }
-      var info = exceptionCaught.at(-1);
-      var ptr = info.excPtr;
-      info.set_rethrown(true);
-      info.set_caught(false);
-      uncaughtExceptionCount++;
-      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
-    };
-
   class ExceptionInfo {
       // excPtr - Thrown object pointer to wrap. Metadata pointer is calculated from it.
       constructor(excPtr) {
@@ -1878,13 +1869,108 @@ async function createWasm() {
       }
     }
   
+  
+  var setTempRet0 = (val) => __emscripten_tempret_set(val);
+  var findMatchingCatch = (args) => {
+      var thrown = exceptionLast?.excPtr;
+      if (!thrown) {
+        // just pass through the null ptr
+        setTempRet0(0);
+        return 0;
+      }
+      var info = new ExceptionInfo(thrown);
+      info.set_adjusted_ptr(thrown);
+      var thrownType = info.get_type();
+      if (!thrownType) {
+        // just pass through the thrown ptr
+        setTempRet0(0);
+        return thrown;
+      }
+  
+      // can_catch receives a **, add indirection
+      // The different catch blocks are denoted by different types.
+      // Due to inheritance, those types may not precisely match the
+      // type of the thrown object. Find one which matches, and
+      // return the type of the catch block which should be called.
+      for (var caughtType of args) {
+        if (caughtType === 0 || caughtType === thrownType) {
+          // Catch all clause matched or exactly the same type is caught
+          break;
+        }
+        var adjusted_ptr_addr = info.ptr + 16;
+        if (___cxa_can_catch(caughtType, thrownType, adjusted_ptr_addr)) {
+          setTempRet0(caughtType);
+          return thrown;
+        }
+      }
+      setTempRet0(thrownType);
+      return thrown;
+    };
+  var ___cxa_find_matching_catch_2 = () => findMatchingCatch([]);
+
+  var ___cxa_find_matching_catch_3 = (arg0) => findMatchingCatch([arg0]);
+
+  var ___cxa_find_matching_catch_6 = (arg0,arg1,arg2,arg3) => findMatchingCatch([arg0,arg1,arg2,arg3]);
+
+  
+  
+  
+  var ___cxa_rethrow = () => {
+      if (!exceptionCaught.length) {
+        abort('no exception to throw');
+      }
+      var info = exceptionCaught.at(-1);
+      var ptr = info.excPtr;
+      info.set_rethrown(true);
+      info.set_caught(false);
+      uncaughtExceptionCount++;
+      ___cxa_increment_exception_refcount(ptr);
+      exceptionLast = new CppException(ptr);
+      throw exceptionLast;
+    };
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  var getExceptionMessageCommon = (ptr) => {
+      var sp = stackSave();
+      var type_addr_addr = stackAlloc(4);
+      var message_addr_addr = stackAlloc(4);
+      ___get_exception_message(ptr, type_addr_addr, message_addr_addr);
+      var type_addr = HEAPU32[((type_addr_addr)>>2)];
+      var message_addr = HEAPU32[((message_addr_addr)>>2)];
+      var type = UTF8ToString(type_addr);
+      _free(type_addr);
+      var message;
+      if (message_addr) {
+        message = UTF8ToString(message_addr);
+        _free(message_addr);
+      }
+      stackRestore(sp);
+      return [type, message];
+    };
+  var getExceptionMessage = (exn) => getExceptionMessageCommon(exn.excPtr);
+  
+  var decrementExceptionRefcount = (exn) => ___cxa_decrement_exception_refcount(exn.excPtr);
+  
+  var incrementExceptionRefcount = (exn) => ___cxa_increment_exception_refcount(exn.excPtr);
   var ___cxa_throw = (ptr, type, destructor) => {
       var info = new ExceptionInfo(ptr);
       // Initialize ExceptionInfo content after it was allocated in __cxa_allocate_exception.
       info.init(type, destructor);
+      ___cxa_increment_exception_refcount(ptr);
+      exceptionLast = new CppException(ptr);
       uncaughtExceptionCount++;
-      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
+      throw exceptionLast;
     };
+
+  var ___cxa_uncaught_exceptions = () => uncaughtExceptionCount;
 
   
   
@@ -1944,7 +2030,10 @@ async function createWasm() {
     };
 
   var ___resumeException = (ptr) => {
-      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
+      if (!exceptionLast) {
+        exceptionLast = new CppException(ptr);
+      }
+      throw exceptionLast;
     };
 
   var syscallGetVarargI = () => {
@@ -6226,6 +6315,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       throw 'unwind';
     };
 
+  function _emscripten_fetch_free(id) {
+    if (Fetch.xhrs.has(id)) {
+      var xhr = Fetch.xhrs.get(id);
+      Fetch.xhrs.free(id);
+      // check if fetch is still in progress and should be aborted
+      if (xhr.readyState > 0 && xhr.readyState < 4) {
+        xhr.abort();
+      }
+    }
+  }
+
   var getHeapMax = () =>
       HEAPU8.length;
   var _emscripten_get_heap_max = () => getHeapMax();
@@ -7026,6 +7126,493 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return i;
     };
 
+  
+  
+  class HandleAllocator {
+      allocated = [undefined];
+      freelist = [];
+      get(id) {
+        assert(this.allocated[id] !== undefined, `invalid handle: ${id}`);
+        return this.allocated[id];
+      }
+      has(id) {
+        return this.allocated[id] !== undefined;
+      }
+      allocate(handle) {
+        var id = this.freelist.pop() || this.allocated.length;
+        this.allocated[id] = handle;
+        return id;
+      }
+      free(id) {
+        assert(this.allocated[id] !== undefined);
+        // Set the slot to `undefined` rather than using `delete` here since
+        // apparently arrays with holes in them can be less efficient.
+        this.allocated[id] = undefined;
+        this.freelist.push(id);
+      }
+    }
+  var Fetch = {
+  async openDatabase(dbname, dbversion) {
+      return new Promise((resolve, reject) => {
+        try {
+          var openRequest = indexedDB.open(dbname, dbversion);
+        } catch (e) {
+          return reject(e);
+        }
+  
+        openRequest.onupgradeneeded = (event) => {
+          var db = /** @type {IDBDatabase} */ (event.target.result);
+          if (db.objectStoreNames.contains('FILES')) {
+            db.deleteObjectStore('FILES');
+          }
+          db.createObjectStore('FILES');
+        };
+        openRequest.onsuccess = (event) => resolve(event.target.result);
+        openRequest.onerror = reject;
+      });
+    },
+  async init() {
+      Fetch.xhrs = new HandleAllocator();
+      if (ENVIRONMENT_IS_PTHREAD) return;
+  
+      addRunDependency('library_fetch_init');
+      try {
+        var db = await Fetch.openDatabase('emscripten_filesystem', 1);
+        Fetch.dbInstance = db;
+      } catch (e) {
+        Fetch.dbInstance = false;
+      } finally {
+        removeRunDependency('library_fetch_init');
+      }
+    },
+  };
+  
+  var runtimeKeepalivePop = () => {
+      assert(runtimeKeepaliveCounter > 0);
+      runtimeKeepaliveCounter -= 1;
+    };
+  
+  function fetchXHR(fetch, onsuccess, onerror, onprogress, onreadystatechange) {
+    var url = HEAPU32[(((fetch)+(8))>>2)];
+    if (!url) {
+      onerror(fetch, 'no url specified!');
+      return;
+    }
+    var url_ = UTF8ToString(url);
+  
+    var fetch_attr = fetch + 108;
+    var requestMethod = UTF8ToString(fetch_attr + 0);
+    requestMethod ||= 'GET';
+    var timeoutMsecs = HEAPU32[(((fetch_attr)+(56))>>2)];
+    var userName = HEAPU32[(((fetch_attr)+(68))>>2)];
+    var password = HEAPU32[(((fetch_attr)+(72))>>2)];
+    var requestHeaders = HEAPU32[(((fetch_attr)+(76))>>2)];
+    var overriddenMimeType = HEAPU32[(((fetch_attr)+(80))>>2)];
+    var dataPtr = HEAPU32[(((fetch_attr)+(84))>>2)];
+    var dataLength = HEAPU32[(((fetch_attr)+(88))>>2)];
+  
+    var fetchAttributes = HEAPU32[(((fetch_attr)+(52))>>2)];
+    var fetchAttrLoadToMemory = !!(fetchAttributes & 1);
+    var fetchAttrStreamData = !!(fetchAttributes & 2);
+    var fetchAttrSynchronous = !!(fetchAttributes & 64);
+  
+    var userNameStr = userName ? UTF8ToString(userName) : undefined;
+    var passwordStr = password ? UTF8ToString(password) : undefined;
+  
+    var xhr = new XMLHttpRequest();
+    xhr.withCredentials = !!HEAPU8[(fetch_attr)+(60)];;
+    xhr._streamData = fetchAttrStreamData;
+    xhr.open(requestMethod, url_, !fetchAttrSynchronous, userNameStr, passwordStr);
+    if (!fetchAttrSynchronous) xhr.timeout = timeoutMsecs; // XHR timeout field is only accessible in async XHRs, and must be set after .open() but before .send().
+    xhr.url_ = url_; // Save the url for debugging purposes (and for comparing to the responseURL that server side advertised)
+    assert(!fetchAttrStreamData, 'streaming is only supported when FETCH_STREAMING is enabled');
+    xhr.responseType = 'arraybuffer';
+  
+    if (overriddenMimeType) {
+      var overriddenMimeTypeStr = UTF8ToString(overriddenMimeType);
+      xhr.overrideMimeType(overriddenMimeTypeStr);
+    }
+    if (requestHeaders) {
+      for (;;) {
+        var key = HEAPU32[((requestHeaders)>>2)];
+        if (!key) break;
+        var value = HEAPU32[(((requestHeaders)+(4))>>2)];
+        if (!value) break;
+        requestHeaders += 8;
+        var keyStr = UTF8ToString(key);
+        var valueStr = UTF8ToString(value);
+        xhr.setRequestHeader(keyStr, valueStr);
+      }
+    }
+  
+    var id = Fetch.xhrs.allocate(xhr);
+    HEAPU32[((fetch)>>2)] = id;
+    var data = (dataPtr && dataLength) ? HEAPU8.slice(dataPtr, dataPtr + dataLength) : null;
+    // TODO: Support specifying custom headers to the request.
+  
+    // Share the code to save the response, as we need to do so both on success
+    // and on error (despite an error, there may be a response, like a 404 page).
+    // This receives a condition, which determines whether to save the xhr's
+    // response, or just 0.
+    function saveResponseAndStatus() {
+      var ptr = 0;
+      var ptrLen = 0;
+      if (xhr.response && fetchAttrLoadToMemory && HEAPU32[(((fetch)+(12))>>2)] === 0) {
+        ptrLen = xhr.response.byteLength;
+      }
+      if (ptrLen > 0) {
+        // The data pointer malloc()ed here has the same lifetime as the emscripten_fetch_t structure itself has, and is
+        // freed when emscripten_fetch_close() is called.
+        ptr = _realloc(HEAPU32[(((fetch)+(12))>>2)], ptrLen);
+        HEAPU8.set(new Uint8Array(/** @type{Array<number>} */(xhr.response)), ptr);
+      }
+      HEAPU32[(((fetch)+(12))>>2)] = ptr
+      writeI53ToI64(fetch + 16, ptrLen);
+      writeI53ToI64(fetch + 24, 0);
+      var len = xhr.response ? xhr.response.byteLength : 0;
+      if (len) {
+        // If the final XHR.onload handler receives the bytedata to compute total length, report that,
+        // otherwise don't write anything out here, which will retain the latest byte size reported in
+        // the most recent XHR.onprogress handler.
+        writeI53ToI64(fetch + 32, len);
+      }
+      HEAP16[(((fetch)+(40))>>1)] = xhr.readyState
+      HEAP16[(((fetch)+(42))>>1)] = xhr.status
+      if (xhr.statusText) stringToUTF8(xhr.statusText, fetch + 44, 64);
+      if (fetchAttrSynchronous) {
+        // The response url pointer malloc()ed here has the same lifetime as the emscripten_fetch_t structure itself has, and is
+        // freed when emscripten_fetch_close() is called.
+        var ruPtr = stringToNewUTF8(xhr.responseURL);
+        HEAPU32[(((fetch)+(200))>>2)] = ruPtr
+      }
+    }
+  
+    xhr.onload = (e) => {
+      // check if xhr was aborted by user and don't try to call back
+      if (!Fetch.xhrs.has(id)) {
+        return;
+      }
+      saveResponseAndStatus();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (fetchAttrStreamData) {
+          assert(xhr.response === null);
+        }
+        onsuccess(fetch, xhr, e);
+      } else {
+        onerror(fetch, e);
+      }
+    };
+    xhr.onerror = (e) => {
+      // check if xhr was aborted by user and don't try to call back
+      if (!Fetch.xhrs.has(id)) {
+        return;
+      }
+      saveResponseAndStatus();
+      onerror(fetch, e);
+    };
+    xhr.ontimeout = (e) => {
+      // check if xhr was aborted by user and don't try to call back
+      if (!Fetch.xhrs.has(id)) {
+        return;
+      }
+      onerror(fetch, e);
+    };
+    xhr.onprogress = (e) => {
+      // check if xhr was aborted by user and don't try to call back
+      if (!Fetch.xhrs.has(id)) {
+        return;
+      }
+      var ptrLen = (fetchAttrLoadToMemory && fetchAttrStreamData && xhr.response) ? xhr.response.byteLength : 0;
+      var ptr = 0;
+      if (ptrLen > 0 && fetchAttrLoadToMemory && fetchAttrStreamData) {
+        assert(onprogress, 'streaming fetch requires an onprogress handler');
+        // The data pointer malloc()ed here has the same lifetime as the emscripten_fetch_t structure itself has, and is
+        // freed when emscripten_fetch_close() is called.
+        ptr = _realloc(HEAPU32[(((fetch)+(12))>>2)], ptrLen);
+        HEAPU8.set(new Uint8Array(/** @type{Array<number>} */(xhr.response)), ptr);
+      }
+      HEAPU32[(((fetch)+(12))>>2)] = ptr
+      writeI53ToI64(fetch + 16, ptrLen);
+      writeI53ToI64(fetch + 24, e.loaded - ptrLen);
+      writeI53ToI64(fetch + 32, e.total);
+      HEAP16[(((fetch)+(40))>>1)] = xhr.readyState
+      var status = xhr.status;
+      // If loading files from a source that does not give HTTP status code, assume success if we get data bytes
+      if (xhr.readyState >= 3 && xhr.status === 0 && e.loaded > 0) status = 200;
+      HEAP16[(((fetch)+(42))>>1)] = status
+      if (xhr.statusText) stringToUTF8(xhr.statusText, fetch + 44, 64);
+      onprogress(fetch, e);
+    };
+    xhr.onreadystatechange = (e) => {
+      // check if xhr was aborted by user and don't try to call back
+      if (!Fetch.xhrs.has(id)) {
+        runtimeKeepalivePop();
+        return;
+      }
+      HEAP16[(((fetch)+(40))>>1)] = xhr.readyState
+      if (xhr.readyState >= 2) {
+        HEAP16[(((fetch)+(42))>>1)] = xhr.status
+      }
+      if (!fetchAttrSynchronous && (xhr.readyState === 2 && xhr.responseURL.length > 0)) {
+        // The response url pointer malloc()ed here has the same lifetime as the emscripten_fetch_t structure itself has, and is
+        // freed when emscripten_fetch_close() is called.
+        var ruPtr = stringToNewUTF8(xhr.responseURL);
+        HEAPU32[(((fetch)+(200))>>2)] = ruPtr
+      }
+      onreadystatechange(fetch, e);
+    };
+    try {
+      xhr.send(data);
+    } catch(e) {
+      onerror(fetch, e);
+    }
+  }
+  
+  
+  var readI53FromI64 = (ptr) => {
+      return HEAPU32[((ptr)>>2)] + HEAP32[(((ptr)+(4))>>2)] * 4294967296;
+    };
+  
+  var readI53FromU64 = (ptr) => {
+      return HEAPU32[((ptr)>>2)] + HEAPU32[(((ptr)+(4))>>2)] * 4294967296;
+    };
+  var writeI53ToI64 = (ptr, num) => {
+      HEAPU32[((ptr)>>2)] = num;
+      var lower = HEAPU32[((ptr)>>2)];
+      HEAPU32[(((ptr)+(4))>>2)] = (num - lower)/4294967296;
+      var deserialized = (num >= 0) ? readI53FromU64(ptr) : readI53FromI64(ptr);
+      var offset = ((ptr)>>2);
+      if (deserialized != num) warnOnce(`writeI53ToI64() out of range: serialized JS Number ${num} to Wasm heap as bytes lo=${ptrToString(HEAPU32[offset])}, hi=${ptrToString(HEAPU32[offset+1])}, which deserializes back to ${deserialized} instead!`);
+    };
+  
+  
+  
+  function fetchCacheData(/** @type {IDBDatabase} */ db, fetch, data, onsuccess, onerror) {
+    if (!db) {
+      onerror(fetch, 0, 'IndexedDB not available!');
+      return;
+    }
+  
+    var fetch_attr = fetch + 108;
+    var destinationPath = HEAPU32[(((fetch_attr)+(64))>>2)];
+    destinationPath ||= HEAPU32[(((fetch)+(8))>>2)];
+    var destinationPathStr = UTF8ToString(destinationPath);
+  
+    try {
+      var transaction = db.transaction(['FILES'], 'readwrite');
+      var packages = transaction.objectStore('FILES');
+      var putRequest = packages.put(data, destinationPathStr);
+      putRequest.onsuccess = (event) => {
+        HEAP16[(((fetch)+(40))>>1)] = 4 // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+        HEAP16[(((fetch)+(42))>>1)] = 200 // Mimic XHR HTTP status code 200 "OK"
+        stringToUTF8("OK", fetch + 44, 64);
+        onsuccess(fetch, 0, destinationPathStr);
+      };
+      putRequest.onerror = (error) => {
+        // Most likely we got an error if IndexedDB is unwilling to store any more data for this page.
+        // TODO: Can we identify and break down different IndexedDB-provided errors and convert those
+        // to more HTTP status codes for more information?
+        HEAP16[(((fetch)+(40))>>1)] = 4 // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+        HEAP16[(((fetch)+(42))>>1)] = 413 // Mimic XHR HTTP status code 413 "Payload Too Large"
+        stringToUTF8("Payload Too Large", fetch + 44, 64);
+        onerror(fetch, 0, error);
+      };
+    } catch(e) {
+      onerror(fetch, 0, e);
+    }
+  }
+  
+  function fetchLoadCachedData(db, fetch, onsuccess, onerror) {
+    if (!db) {
+      onerror(fetch, 0, 'IndexedDB not available!');
+      return;
+    }
+  
+    var fetch_attr = fetch + 108;
+    var path = HEAPU32[(((fetch_attr)+(64))>>2)];
+    path ||= HEAPU32[(((fetch)+(8))>>2)];
+    var pathStr = UTF8ToString(path);
+  
+    try {
+      var transaction = db.transaction(['FILES'], 'readonly');
+      var packages = transaction.objectStore('FILES');
+      var getRequest = packages.get(pathStr);
+      getRequest.onsuccess = (event) => {
+        if (event.target.result) {
+          var value = event.target.result;
+          var len = value.byteLength || value.length;
+          // The data pointer malloc()ed here has the same lifetime as the emscripten_fetch_t structure itself has, and is
+          // freed when emscripten_fetch_close() is called.
+          var ptr = _malloc(len);
+          HEAPU8.set(new Uint8Array(value), ptr);
+          HEAPU32[(((fetch)+(12))>>2)] = ptr;
+          writeI53ToI64(fetch + 16, len);
+          writeI53ToI64(fetch + 24, 0);
+          writeI53ToI64(fetch + 32, len);
+          HEAP16[(((fetch)+(40))>>1)] = 4 // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+          HEAP16[(((fetch)+(42))>>1)] = 200 // Mimic XHR HTTP status code 200 "OK"
+          stringToUTF8("OK", fetch + 44, 64);
+          onsuccess(fetch, 0, value);
+        } else {
+          // Succeeded to load, but the load came back with the value of undefined, treat that as an error since we never store undefined in db.
+          HEAP16[(((fetch)+(40))>>1)] = 4 // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+          HEAP16[(((fetch)+(42))>>1)] = 404 // Mimic XHR HTTP status code 404 "Not Found"
+          stringToUTF8("Not Found", fetch + 44, 64);
+          onerror(fetch, 0, 'no data');
+        }
+      };
+      getRequest.onerror = (error) => {
+        HEAP16[(((fetch)+(40))>>1)] = 4 // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+        HEAP16[(((fetch)+(42))>>1)] = 404 // Mimic XHR HTTP status code 404 "Not Found"
+        stringToUTF8("Not Found", fetch + 44, 64);
+        onerror(fetch, 0, error);
+      };
+    } catch(e) {
+      onerror(fetch, 0, e);
+    }
+  }
+  
+  function fetchDeleteCachedData(db, fetch, onsuccess, onerror) {
+    if (!db) {
+      onerror(fetch, 0, 'IndexedDB not available!');
+      return;
+    }
+  
+    var fetch_attr = fetch + 108;
+    var path = HEAPU32[(((fetch_attr)+(64))>>2)];
+    path ||= HEAPU32[(((fetch)+(8))>>2)];
+  
+    var pathStr = UTF8ToString(path);
+  
+    try {
+      var transaction = db.transaction(['FILES'], 'readwrite');
+      var packages = transaction.objectStore('FILES');
+      var request = packages.delete(pathStr);
+      request.onsuccess = (event) => {
+        var value = event.target.result;
+        HEAPU32[(((fetch)+(12))>>2)] = 0;
+        writeI53ToI64(fetch + 16, 0);
+        writeI53ToI64(fetch + 24, 0);
+        writeI53ToI64(fetch + 32, 0);
+        // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+        HEAP16[(((fetch)+(40))>>1)] = 4;
+        // Mimic XHR HTTP status code 200 "OK"
+        HEAP16[(((fetch)+(42))>>1)] = 200;
+        stringToUTF8("OK", fetch + 44, 64);
+        onsuccess(fetch, 0, value);
+      };
+      request.onerror = (error) => {
+        HEAP16[(((fetch)+(40))>>1)] = 4 // Mimic XHR readyState 4 === 'DONE: The operation is complete'
+        HEAP16[(((fetch)+(42))>>1)] = 404 // Mimic XHR HTTP status code 404 "Not Found"
+        stringToUTF8("Not Found", fetch + 44, 64);
+        onerror(fetch, 0, error);
+      };
+    } catch(e) {
+      onerror(fetch, 0, e);
+    }
+  }
+  
+  
+  
+  
+  function _emscripten_start_fetch(fetch, successcb, errorcb, progresscb, readystatechangecb) {
+    // Avoid shutting down the runtime since we want to wait for the async
+    // response.
+    runtimeKeepalivePush();
+  
+    var fetch_attr = fetch + 108;
+    var onsuccess = HEAPU32[(((fetch_attr)+(36))>>2)];
+    var onerror = HEAPU32[(((fetch_attr)+(40))>>2)];
+    var onprogress = HEAPU32[(((fetch_attr)+(44))>>2)];
+    var onreadystatechange = HEAPU32[(((fetch_attr)+(48))>>2)];
+    var fetchAttributes = HEAPU32[(((fetch_attr)+(52))>>2)];
+    var fetchAttrSynchronous = !!(fetchAttributes & 64);
+  
+    function doCallback(f) {
+      if (fetchAttrSynchronous) {
+        f();
+      } else {
+        callUserCallback(f);
+      }
+    }
+  
+    var reportSuccess = (fetch, xhr, e) => {
+      runtimeKeepalivePop();
+      doCallback(() => {
+        if (onsuccess) getWasmTableEntry(onsuccess)(fetch);
+        else successcb?.(fetch);
+      });
+    };
+  
+    var reportProgress = (fetch, e) => {
+      doCallback(() => {
+        if (onprogress) getWasmTableEntry(onprogress)(fetch);
+        else progresscb?.(fetch);
+      });
+    };
+  
+    var reportError = (fetch, e) => {
+      runtimeKeepalivePop();
+      doCallback(() => {
+        if (onerror) getWasmTableEntry(onerror)(fetch);
+        else errorcb?.(fetch);
+      });
+    };
+  
+    var reportReadyStateChange = (fetch, e) => {
+      doCallback(() => {
+        if (onreadystatechange) getWasmTableEntry(onreadystatechange)(fetch);
+        else readystatechangecb?.(fetch);
+      });
+    };
+  
+    var performUncachedXhr = (fetch, xhr, e) => {
+      fetchXHR(fetch, reportSuccess, reportError, reportProgress, reportReadyStateChange);
+    };
+  
+    var cacheResultAndReportSuccess = (fetch, xhr, e) => {
+      var storeSuccess = (fetch, xhr, e) => {
+        runtimeKeepalivePop();
+        doCallback(() => {
+          if (onsuccess) getWasmTableEntry(onsuccess)(fetch);
+          else successcb?.(fetch);
+        });
+      };
+      var storeError = (fetch, xhr, e) => {
+        runtimeKeepalivePop();
+        doCallback(() => {
+          if (onsuccess) getWasmTableEntry(onsuccess)(fetch);
+          else successcb?.(fetch);
+        });
+      };
+      fetchCacheData(Fetch.dbInstance, fetch, xhr.response, storeSuccess, storeError);
+    };
+  
+    var performCachedXhr = (fetch, xhr, e) => {
+      fetchXHR(fetch, cacheResultAndReportSuccess, reportError, reportProgress, reportReadyStateChange);
+    };
+  
+    var requestMethod = UTF8ToString(fetch_attr + 0);
+    var fetchAttrReplace = !!(fetchAttributes & 16);
+    var fetchAttrPersistFile = !!(fetchAttributes & 4);
+    var fetchAttrNoDownload = !!(fetchAttributes & 32);
+    if (requestMethod === 'EM_IDB_STORE') {
+      // TODO(?): Here we perform a clone of the data, because storing shared typed arrays to IndexedDB does not seem to be allowed.
+      var ptr = HEAPU32[(((fetch_attr)+(84))>>2)];
+      var size = HEAPU32[(((fetch_attr)+(88))>>2)];
+      fetchCacheData(Fetch.dbInstance, fetch, HEAPU8.slice(ptr, ptr + size), reportSuccess, reportError);
+    } else if (requestMethod === 'EM_IDB_DELETE') {
+      fetchDeleteCachedData(Fetch.dbInstance, fetch, reportSuccess, reportError);
+    } else if (!fetchAttrReplace) {
+      fetchLoadCachedData(Fetch.dbInstance, fetch, reportSuccess, fetchAttrNoDownload ? reportError : (fetchAttrPersistFile ? performCachedXhr : performUncachedXhr));
+    } else if (!fetchAttrNoDownload) {
+      fetchXHR(fetch, fetchAttrPersistFile ? cacheResultAndReportSuccess : reportSuccess, reportError, reportProgress, reportReadyStateChange);
+    } else {
+      return 0; // todo: free
+    }
+    return fetch;
+  }
+
   var _emscripten_webgl_destroy_context = (contextHandle) => {
       if (GL.currentContext == contextHandle) GL.currentContext = 0;
       GL.deleteContext(contextHandle);
@@ -7697,10 +8284,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   
   
-  var runtimeKeepalivePop = () => {
-      assert(runtimeKeepaliveCounter > 0);
-      runtimeKeepaliveCounter -= 1;
-    };
   function _emwgpuAdapterRequestDevice(adapterPtr, futureId, deviceLostFutureId, devicePtr, queuePtr, descriptor) {
     futureId = bigintToI53Checked(futureId);
     deviceLostFutureId = bigintToI53Checked(deviceLostFutureId);
@@ -8418,9 +9001,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       pass.setPipeline(pipeline);
     };
 
-  var readI53FromI64 = (ptr) => {
-      return HEAPU32[((ptr)>>2)] + HEAP32[(((ptr)+(4))>>2)] * 4294967296;
-    };
   
   
   var _wgpuDeviceCreateBindGroup = (devicePtr, descriptor) => {
@@ -8863,6 +9443,7 @@ PThread.init();;
       // start. This helps it optimize VBO double-buffering and reduce GPU stalls.
       registerPreMainLoop(() => GL.newRenderingFrameStarted());
     ;
+Fetch.init();;
 // End JS library code
 
 // include: postlibrary.js
@@ -8914,17 +9495,14 @@ if (Module['wasmBinary']) wasmBinary = Module['wasmBinary'];
   Module['stringToUTF8'] = stringToUTF8;
   Module['lengthBytesUTF8'] = lengthBytesUTF8;
   var missingLibrarySymbols = [
-  'writeI53ToI64',
   'writeI53ToI64Clamped',
   'writeI53ToI64Signaling',
   'writeI53ToU64Clamped',
   'writeI53ToU64Signaling',
-  'readI53FromU64',
   'convertI32PairToI53',
   'convertI32PairToI53Checked',
   'convertU32PairToI53',
   'getTempRet0',
-  'setTempRet0',
   'growMemory',
   'withStackSave',
   'inetPton4',
@@ -8939,7 +9517,6 @@ if (Module['wasmBinary']) wasmBinary = Module['wasmBinary'];
   'getDynCaller',
   'dynCall',
   'asmjsMangle',
-  'HandleAllocator',
   'addOnInit',
   'addOnPostCtor',
   'addOnPreMain',
@@ -9058,7 +9635,9 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'wasmExports',
   'writeStackCookie',
   'checkStackCookie',
+  'writeI53ToI64',
   'readI53FromI64',
+  'readI53FromU64',
   'INT53_MAX',
   'INT53_MIN',
   'bigintToI53Checked',
@@ -9073,6 +9652,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'stackSave',
   'stackRestore',
   'stackAlloc',
+  'setTempRet0',
   'createNamedFunction',
   'ptrToString',
   'zeroMemory',
@@ -9098,6 +9678,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'asyncLoad',
   'alignMemory',
   'mmapAlloc',
+  'HandleAllocator',
   'wasmTable',
   'wasmMemory',
   'getUniqueRunDependency',
@@ -9153,9 +9734,14 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'registerPreMainLoop',
   'promiseMap',
   'uncaughtExceptionCount',
+  'exceptionLast',
   'exceptionCaught',
   'ExceptionInfo',
   'findMatchingCatch',
+  'getExceptionMessageCommon',
+  'incrementExceptionRefcount',
+  'decrementExceptionRefcount',
+  'getExceptionMessage',
   'Browser',
   'requestFullscreen',
   'requestFullScreen',
@@ -9329,6 +9915,11 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'checkMailbox',
   'WEBRTC',
   'WEBSOCKET',
+  'Fetch',
+  'fetchDeleteCachedData',
+  'fetchLoadCachedData',
+  'fetchCacheData',
+  'fetchXHR',
   'WebGPU',
   'emwgpuStringToInt_BufferMapState',
   'emwgpuStringToInt_CompilationMessageType',
@@ -9409,6 +10000,7 @@ function ImGui_ImplGlfw_EmscriptenOpenURL(url) { url = url ? UTF8ToString(url) :
 // Imports from the Wasm binary.
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
 var _free = makeInvalidEarlyAccess('_free');
+var _realloc = makeInvalidEarlyAccess('_realloc');
 var _malloc = makeInvalidEarlyAccess('_malloc');
 var _fflush = makeInvalidEarlyAccess('_fflush');
 var _pthread_self = makeInvalidEarlyAccess('_pthread_self');
@@ -9459,6 +10051,7 @@ var __emscripten_thread_exit = makeInvalidEarlyAccess('__emscripten_thread_exit'
 var __emscripten_check_mailbox = makeInvalidEarlyAccess('__emscripten_check_mailbox');
 var _memalign = makeInvalidEarlyAccess('_memalign');
 var _setThrew = makeInvalidEarlyAccess('_setThrew');
+var __emscripten_tempret_set = makeInvalidEarlyAccess('__emscripten_tempret_set');
 var _emscripten_stack_init = makeInvalidEarlyAccess('_emscripten_stack_init');
 var _emscripten_stack_set_limits = makeInvalidEarlyAccess('_emscripten_stack_set_limits');
 var _emscripten_stack_get_free = makeInvalidEarlyAccess('_emscripten_stack_get_free');
@@ -9466,6 +10059,9 @@ var __emscripten_stack_restore = makeInvalidEarlyAccess('__emscripten_stack_rest
 var __emscripten_stack_alloc = makeInvalidEarlyAccess('__emscripten_stack_alloc');
 var _emscripten_stack_get_current = makeInvalidEarlyAccess('_emscripten_stack_get_current');
 var ___cxa_decrement_exception_refcount = makeInvalidEarlyAccess('___cxa_decrement_exception_refcount');
+var ___cxa_increment_exception_refcount = makeInvalidEarlyAccess('___cxa_increment_exception_refcount');
+var ___get_exception_message = makeInvalidEarlyAccess('___get_exception_message');
+var ___cxa_can_catch = makeInvalidEarlyAccess('___cxa_can_catch');
 var ___cxa_get_exception_ptr = makeInvalidEarlyAccess('___cxa_get_exception_ptr');
 var __indirect_function_table = makeInvalidEarlyAccess('__indirect_function_table');
 var wasmTable = makeInvalidEarlyAccess('wasmTable');
@@ -9473,6 +10069,7 @@ var wasmTable = makeInvalidEarlyAccess('wasmTable');
 function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['__main_argc_argv'] != 'undefined', 'missing Wasm export: __main_argc_argv');
   assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
+  assert(typeof wasmExports['realloc'] != 'undefined', 'missing Wasm export: realloc');
   assert(typeof wasmExports['malloc'] != 'undefined', 'missing Wasm export: malloc');
   assert(typeof wasmExports['fflush'] != 'undefined', 'missing Wasm export: fflush');
   assert(typeof wasmExports['pthread_self'] != 'undefined', 'missing Wasm export: pthread_self');
@@ -9523,6 +10120,7 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['_emscripten_check_mailbox'] != 'undefined', 'missing Wasm export: _emscripten_check_mailbox');
   assert(typeof wasmExports['memalign'] != 'undefined', 'missing Wasm export: memalign');
   assert(typeof wasmExports['setThrew'] != 'undefined', 'missing Wasm export: setThrew');
+  assert(typeof wasmExports['_emscripten_tempret_set'] != 'undefined', 'missing Wasm export: _emscripten_tempret_set');
   assert(typeof wasmExports['emscripten_stack_init'] != 'undefined', 'missing Wasm export: emscripten_stack_init');
   assert(typeof wasmExports['emscripten_stack_set_limits'] != 'undefined', 'missing Wasm export: emscripten_stack_set_limits');
   assert(typeof wasmExports['emscripten_stack_get_free'] != 'undefined', 'missing Wasm export: emscripten_stack_get_free');
@@ -9530,10 +10128,14 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['_emscripten_stack_alloc'] != 'undefined', 'missing Wasm export: _emscripten_stack_alloc');
   assert(typeof wasmExports['emscripten_stack_get_current'] != 'undefined', 'missing Wasm export: emscripten_stack_get_current');
   assert(typeof wasmExports['__cxa_decrement_exception_refcount'] != 'undefined', 'missing Wasm export: __cxa_decrement_exception_refcount');
+  assert(typeof wasmExports['__cxa_increment_exception_refcount'] != 'undefined', 'missing Wasm export: __cxa_increment_exception_refcount');
+  assert(typeof wasmExports['__get_exception_message'] != 'undefined', 'missing Wasm export: __get_exception_message');
+  assert(typeof wasmExports['__cxa_can_catch'] != 'undefined', 'missing Wasm export: __cxa_can_catch');
   assert(typeof wasmExports['__cxa_get_exception_ptr'] != 'undefined', 'missing Wasm export: __cxa_get_exception_ptr');
   assert(typeof wasmExports['__indirect_function_table'] != 'undefined', 'missing Wasm export: __indirect_function_table');
   _main = Module['_main'] = createExportWrapper('__main_argc_argv', 2);
   _free = createExportWrapper('free', 1);
+  _realloc = createExportWrapper('realloc', 2);
   _malloc = createExportWrapper('malloc', 1);
   _fflush = createExportWrapper('fflush', 1);
   _pthread_self = wasmExports['pthread_self'];
@@ -9584,6 +10186,7 @@ function assignWasmExports(wasmExports) {
   __emscripten_check_mailbox = createExportWrapper('_emscripten_check_mailbox', 0);
   _memalign = createExportWrapper('memalign', 2);
   _setThrew = createExportWrapper('setThrew', 2);
+  __emscripten_tempret_set = createExportWrapper('_emscripten_tempret_set', 1);
   _emscripten_stack_init = wasmExports['emscripten_stack_init'];
   _emscripten_stack_set_limits = wasmExports['emscripten_stack_set_limits'];
   _emscripten_stack_get_free = wasmExports['emscripten_stack_get_free'];
@@ -9591,6 +10194,9 @@ function assignWasmExports(wasmExports) {
   __emscripten_stack_alloc = wasmExports['_emscripten_stack_alloc'];
   _emscripten_stack_get_current = wasmExports['emscripten_stack_get_current'];
   ___cxa_decrement_exception_refcount = createExportWrapper('__cxa_decrement_exception_refcount', 1);
+  ___cxa_increment_exception_refcount = createExportWrapper('__cxa_increment_exception_refcount', 1);
+  ___get_exception_message = createExportWrapper('__get_exception_message', 3);
+  ___cxa_can_catch = createExportWrapper('__cxa_can_catch', 3);
   ___cxa_get_exception_ptr = createExportWrapper('__cxa_get_exception_ptr', 1);
   __indirect_function_table = wasmTable = wasmExports['__indirect_function_table'];
 }
@@ -9614,6 +10220,8 @@ function assignWasmExports(wasmExports) {
     __cxa_rethrow: ___cxa_rethrow,
     /** @export */
     __cxa_throw: ___cxa_throw,
+    /** @export */
+    __cxa_uncaught_exceptions: ___cxa_uncaught_exceptions,
     /** @export */
     __pthread_create_js: ___pthread_create_js,
     /** @export */
@@ -9681,6 +10289,8 @@ function assignWasmExports(wasmExports) {
     /** @export */
     emscripten_exit_with_live_runtime: _emscripten_exit_with_live_runtime,
     /** @export */
+    emscripten_fetch_free: _emscripten_fetch_free,
+    /** @export */
     emscripten_get_heap_max: _emscripten_get_heap_max,
     /** @export */
     emscripten_get_now: _emscripten_get_now,
@@ -9723,6 +10333,8 @@ function assignWasmExports(wasmExports) {
     /** @export */
     emscripten_stack_unwind_buffer: _emscripten_stack_unwind_buffer,
     /** @export */
+    emscripten_start_fetch: _emscripten_start_fetch,
+    /** @export */
     emscripten_webgl_destroy_context: _emscripten_webgl_destroy_context,
     /** @export */
     emwgpuAdapterRequestDevice: _emwgpuAdapterRequestDevice,
@@ -9761,6 +10373,12 @@ function assignWasmExports(wasmExports) {
     /** @export */
     fd_write: _fd_write,
     /** @export */
+    invoke_diii,
+    /** @export */
+    invoke_fiii,
+    /** @export */
+    invoke_i,
+    /** @export */
     invoke_ii,
     /** @export */
     invoke_iid,
@@ -9771,15 +10389,29 @@ function assignWasmExports(wasmExports) {
     /** @export */
     invoke_iiiii,
     /** @export */
+    invoke_iiiiid,
+    /** @export */
     invoke_iiiiii,
     /** @export */
     invoke_iiiiiii,
+    /** @export */
+    invoke_iiiiiiii,
     /** @export */
     invoke_iiiiiiiii,
     /** @export */
     invoke_iiiiiiiiii,
     /** @export */
+    invoke_iiiiiiiiiii,
+    /** @export */
+    invoke_iiiiiiiiiiii,
+    /** @export */
+    invoke_iiiiiiiiiiiii,
+    /** @export */
+    invoke_iiiiij,
+    /** @export */
     invoke_iij,
+    /** @export */
+    invoke_jiiii,
     /** @export */
     invoke_v,
     /** @export */
@@ -9789,11 +10421,21 @@ function assignWasmExports(wasmExports) {
     /** @export */
     invoke_viii,
     /** @export */
+    invoke_viiidi,
+    /** @export */
+    invoke_viiifi,
+    /** @export */
     invoke_viiii,
     /** @export */
     invoke_viiiii,
     /** @export */
     invoke_viiiiii,
+    /** @export */
+    invoke_viiiiiii,
+    /** @export */
+    invoke_viiiiiiiiii,
+    /** @export */
+    invoke_viiiiiiiiiiiiiii,
     /** @export */
     invoke_vij,
     /** @export */
@@ -10038,6 +10680,172 @@ function invoke_iiiiiii(index,a1,a2,a3,a4,a5,a6) {
   var sp = stackSave();
   try {
     return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiifi(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiidi(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiij(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiid(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_jiiii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+    return 0n;
+  }
+}
+
+function invoke_iiiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_fiii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_diii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_i(index) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)();
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiiiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;

@@ -55,14 +55,16 @@
       width: 100%;
       height: 100%;
     }
-    #physics-canvas  { z-index: 0; }
-    /* Particles draw over the display window's background + shapes. The canvas is
-       transparent wherever nothing is drawn, and ignores the mouse so input still
-       reaches the display window underneath. */
-    #particle-canvas {
+    /* Particles draw under the display window's shapes. The display canvas is on top and
+       transparent wherever nothing is painted; the particle canvas paints the background.
+       The particle canvas ignores the mouse so input always reaches the display window. */
+    #physics-canvas  {
       z-index: 1;
-      pointer-events: none;
       background: transparent;
+    }
+    #particle-canvas {
+      z-index: 0;
+      pointer-events: none;
     }
   </style>
 </head>
